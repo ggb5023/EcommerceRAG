@@ -1,7 +1,20 @@
 # Credentials and local state
+# All development documents remain private; only the project landing page is published.
+*.md
+!/README.md
+docs/
+.private/
+*.bundle
+*.patch
+*.bak
+*chat-history*
+*conversation-history*
 .env
 .env.*
 !.env.example
+infra.env
+providers.env
+oss.env
 *.pem
 *.key
 id_ed25519*

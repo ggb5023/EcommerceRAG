@@ -11,3 +11,4 @@
 *.json text eol=lf
 *.ps1 text eol=crlf
 *.pdf binary
+.githooks/* text eol=lf

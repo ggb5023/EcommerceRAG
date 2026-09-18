@@ -2,8 +2,10 @@
 set -euo pipefail
 [[ $EUID -eq 0 ]] || exit 1
 export DEBIAN_FRONTEND=noninteractive
-repo=/opt/ecommerce-rag
-ip -4 -o addr show | grep -q '192.0.2.10/' || { echo 'Dev private IP not found'; exit 1; }
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+dev_ip=$(python3 "$repo/scripts/infra_config.py" ECR_DEV_PRIVATE_IP)
+[[ "$repo" == /opt/ecommerce-rag ]] || { echo 'Run from Dev workspace'; exit 1; }
+ip -4 -o addr show | awk '{print $4}' | cut -d/ -f1 | grep -Fxq "$dev_ip" || { echo 'Configured Dev private IP not found'; exit 1; }
 bash "$repo/scripts/install-docker.sh"
 apt-get install -y -qq build-essential git tmux postgresql-client-16 redis-tools protobuf-compiler python3-venv shellcheck
 install -d -m 700 /etc/ecommerce-rag

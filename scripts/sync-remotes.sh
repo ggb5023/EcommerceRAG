@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$repo"
+python3 scripts/privacy_guard.py --history
 [[ "$(git branch --show-current)" == main ]] || { echo "Run from main"; exit 1; }
 [[ -z "$(git status --porcelain)" ]] || { echo "Working tree must be clean"; exit 1; }
 commit=$(git rev-parse HEAD)

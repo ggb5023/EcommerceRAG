@@ -2,10 +2,15 @@
 import os
 from pathlib import Path
 import secrets
+from infra_config import require
 
 root = Path("/etc/ecommerce-rag")
 if os.geteuid() != 0 or not root.is_dir():
     raise SystemExit("root and pre-created protected directory required")
+try:
+    db_ip = require('ECR_DB_PRIVATE_IP')
+except (ValueError, OSError):
+    raise SystemExit('UNVERIFIED private infrastructure configuration')
 values = {}
 for name in ("pg_admin_password", "pg_app_password", "redis_password"):
     target = root / name
@@ -27,7 +32,7 @@ dev = root / "dev.env"
 if not dev.exists():
     fd = os.open(dev, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as stream:
-        stream.write("PGHOST=192.0.2.20\nPGPORT=5432\nPGDATABASE=rag\nPGUSER=rag_app\n"
-                     "PGPASSWORD=" + values["pg_app_password"] + "\nREDIS_HOST=192.0.2.20\n"
+        stream.write("PGHOST=" + db_ip + "\nPGPORT=5432\nPGDATABASE=rag\nPGUSER=rag_app\n"
+                     "PGPASSWORD=" + values["pg_app_password"] + "\nREDIS_HOST=" + db_ip + "\n"
                      "REDIS_PASSWORD=" + values["redis_password"] + "\n")
 print("Credential files ready; existing values preserved")

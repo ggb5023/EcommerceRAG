@@ -19,4 +19,5 @@ for failure in failures:
     print(failure)
 if failures:
     raise SystemExit(1)
-print("PASS active documentation links and 18-table schema")
+print("PASS public README links and 18-table schema")
+print("PASS optional local development-document links" if (root / 'docs/README.md').exists() else "SKIP private development documents (not distributed)")

@@ -3,6 +3,7 @@ set -euo pipefail
 [[ $EUID -eq 0 ]] || exit 1
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 [[ "$repo" == /opt/ecommerce-rag-ops ]] || { echo "Run from DB ops workspace"; exit 1; }
+python3 "$repo/scripts/infra_config.py" --check ECR_DEV_PRIVATE_IP ECR_DB_PRIVATE_IP ECR_DATA_UUID
 bash "$repo/scripts/check-data-mount.sh"
 bash "$repo/scripts/install-docker.sh"
 install -d -m 700 /etc/ecommerce-rag /data/backups

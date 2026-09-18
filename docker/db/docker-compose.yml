@@ -10,7 +10,7 @@ services:
       POSTGRES_DB: rag
       POSTGRES_INITDB_ARGS: --encoding=UTF8 --auth-host=scram-sha-256
     command: ["postgres", "-c", "listen_addresses=*", "-c", "shared_buffers=1.5GB", "-c", "effective_cache_size=4GB", "-c", "work_mem=4MB", "-c", "maintenance_work_mem=256MB", "-c", "max_connections=50", "-c", "log_min_duration_statement=1000"]
-    ports: ["${DB_BIND_IP:-192.0.2.20}:5432:5432"]
+    ports: ["${DB_BIND_IP:?set private DB_BIND_IP in db.env}:5432:5432"]
     volumes:
       - /data/pg:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d:ro
@@ -28,7 +28,7 @@ services:
     container_name: rag-redis
     restart: unless-stopped
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-    ports: ["${DB_BIND_IP:-192.0.2.20}:6379:6379"]
+    ports: ["${DB_BIND_IP:?set private DB_BIND_IP in db.env}:6379:6379"]
     volumes:
       - /data/redis:/data
       - /etc/ecommerce-rag/redis.conf:/usr/local/etc/redis/redis.conf:ro
