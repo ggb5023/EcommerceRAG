@@ -1,0 +1,1 @@
+"""EcommerceRAG application foundation."""

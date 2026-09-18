@@ -1,0 +1,116 @@
+syntax = "proto3";
+package rag.v1;
+option go_package = "github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1;ragv1";
+
+// Only Go's authenticated server may produce this context.
+message RequestContext {
+  string request_id = 1;
+  string tenant_id = 2;
+  string user_id = 3;
+  repeated string allowed_shop_ids = 4;
+  bool all_shops = 5;
+  string permission_revision = 6;
+}
+message Evidence {
+  string id = 1;
+  string content = 2;
+  string source_type = 3;
+  string source_ref = 4;
+  string document_id = 5;
+  string version_id = 6;
+  int32 page_no = 7;
+  int32 rank = 8;
+  double raw_score = 9;
+}
+message Fact {
+  string tool_name = 1;
+  string value_json = 2;
+  string observed_at = 3;
+  bool is_mock = 4;
+}
+service RagService {
+  rpc Understand(UnderstandRequest) returns (UnderstandResponse);
+  rpc Search(SearchRequest) returns (stream SearchResponse);
+  rpc Generate(GenerateRequest) returns (stream GenerateResponse);
+}
+message UnderstandRequest {
+  RequestContext context = 1;
+  string query = 2;
+  string history_summary = 3;
+}
+message UnderstandResponse {
+  string rewritten_query = 1;
+  string intent = 2;
+  string information_source = 3;
+  repeated string required_fact_tools = 4;
+  string clarification = 5;
+}
+message SearchRequest {
+  RequestContext context = 1;
+  string query = 2;
+  bool allow_external_search = 3;
+}
+message SearchResponse {
+  string phase = 1;
+  repeated Evidence evidence = 2;
+  bool complete = 3;
+  repeated string degraded_stages = 4;
+}
+message GenerateRequest {
+  RequestContext context = 1;
+  string query = 2;
+  repeated Evidence evidence = 3;
+  repeated Fact facts = 4;
+}
+message GenerateResponse {
+  uint64 sequence = 1;
+  oneof event {
+    string delta = 2;
+    Evidence citation = 3;
+    string usage_json = 4;
+    bool done = 5;
+    string error_code = 6;
+  }
+}
+service IngestService {
+  rpc Submit(SubmitRequest) returns (SubmitResponse);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+}
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_PENDING = 1;
+  JOB_STATUS_RUNNING = 2;
+  JOB_STATUS_DONE = 3;
+  JOB_STATUS_FAILED = 4;
+  JOB_STATUS_CANCELLED = 5;
+}
+message SubmitRequest {
+  RequestContext context = 1;
+  string idempotency_key = 2;
+  string source_id = 3;
+  string object_key = 4;
+  string pipeline_version = 5;
+}
+message SubmitResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+}
+message GetStatusRequest {
+  RequestContext context = 1;
+  string job_id = 2;
+}
+message GetStatusResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+  string stage = 3;
+  string error_code = 4;
+}
+message CancelRequest {
+  RequestContext context = 1;
+  string job_id = 2;
+}
+message CancelResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+}

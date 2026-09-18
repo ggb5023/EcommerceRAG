@@ -1,0 +1,25 @@
+# Credentials and local state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_ed25519*
+.workbuddy-ai/
+.codex/
+.local/
+backups/
+*.dump
+*.log
+# Build and dependency artifacts
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+coverage/
+.pytest_cache/
+go/bin/
+bin/
+tmp/
+.DS_Store

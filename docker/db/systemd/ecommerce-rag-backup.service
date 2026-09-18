@@ -1,0 +1,7 @@
+[Unit]
+Description=EcommerceRAG PostgreSQL backup
+After=ecommerce-rag-db.service
+RequiresMountsFor=/data
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/ecommerce-rag-ops/scripts/backup-db.sh

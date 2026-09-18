@@ -1,0 +1,21 @@
+{
+  "verified_at": "2026-09-18",
+  "os": "Ubuntu 24.04.4 LTS",
+  "architecture": "amd64",
+  "go": "1.27.1",
+  "node": "24.21.0",
+  "python_managed": "3.12.14",
+  "uv": "0.12.16",
+  "buf": "1.73.0",
+  "grpcurl": "1.9.4",
+  "docker_ubuntu_package": "29.1.3-0ubuntu3~24.04.2",
+  "compose_ubuntu_package": "2.40.3+ds1-0ubuntu1~24.04.1",
+  "buildx_ubuntu_package": "0.30.1-0ubuntu1~24.04.1",
+  "codex_dev": "0.155.0",
+  "codex_db": "0.154.0",
+  "dependency_files": [
+    "python/uv.lock",
+    "web/package-lock.json"
+  ],
+  "note": "Go currently standard library only. Existing system Python preserved; apt updated its security patch dependencies while installing python3-venv."
+}

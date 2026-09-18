@@ -1,0 +1,16 @@
+[Unit]
+Description=EcommerceRAG databases
+Requires=docker.service
+After=docker.service network-online.target
+RequiresMountsFor=/data
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/ecommerce-rag-ops
+ExecStartPre=/bin/bash /opt/ecommerce-rag-ops/scripts/check-data-mount.sh
+ExecStartPre=/bin/bash /opt/ecommerce-rag-ops/scripts/db-firewall.sh
+ExecStart=/usr/bin/docker compose --env-file /etc/ecommerce-rag/db.env -f docker/db/docker-compose.yml up -d --wait --wait-timeout 180
+ExecStop=/usr/bin/docker compose --env-file /etc/ecommerce-rag/db.env -f docker/db/docker-compose.yml stop
+TimeoutStartSec=240
+[Install]
+WantedBy=multi-user.target
