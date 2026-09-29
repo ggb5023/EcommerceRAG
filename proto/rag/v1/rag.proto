@@ -10,6 +10,8 @@ message RequestContext {
   repeated string allowed_shop_ids = 4;
   bool all_shops = 5;
   string permission_revision = 6;
+  string shop_id = 7;
+  string role = 8;
 }
 message Evidence {
   string id = 1;
@@ -21,6 +23,9 @@ message Evidence {
   int32 page_no = 7;
   int32 rank = 8;
   double raw_score = 9;
+  string shop_id = 10;
+  string disclosure_class = 11;
+  bool customer_eligible = 12;
 }
 message Fact {
   string tool_name = 1;
@@ -44,23 +49,32 @@ message UnderstandResponse {
   string information_source = 3;
   repeated string required_fact_tools = 4;
   string clarification = 5;
+  repeated EntitySlot entities = 6;
+  double confidence = 7;
+  string reason = 8;
 }
+message EntitySlot { string name = 1; string value = 2; double confidence = 3; }
 message SearchRequest {
   RequestContext context = 1;
   string query = 2;
   bool allow_external_search = 3;
+  string response_purpose = 4;
 }
 message SearchResponse {
   string phase = 1;
   repeated Evidence evidence = 2;
   bool complete = 3;
   repeated string degraded_stages = 4;
+  string request_id = 5;
+  bool is_mock = 6;
+  string error_code = 7;
 }
 message GenerateRequest {
   RequestContext context = 1;
   string query = 2;
   repeated Evidence evidence = 3;
   repeated Fact facts = 4;
+  string response_purpose = 5;
 }
 message GenerateResponse {
   uint64 sequence = 1;
@@ -70,6 +84,8 @@ message GenerateResponse {
     string usage_json = 4;
     bool done = 5;
     string error_code = 6;
+    bool is_mock = 7;
+    bool can_copy = 8;
   }
 }
 service IngestService {

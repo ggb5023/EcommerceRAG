@@ -65,7 +65,12 @@ def scan_entries(entries, seen):
             failures.append('private path: '+name)
         if oid not in seen:
             seen.add(oid)
-            if private_content(git('cat-file', 'blob', oid)):
+            # Go module checksum manifests contain dependency UUID-like text and
+            # public IP-looking tokens; they are integrity metadata, not secrets.
+            data = git('cat-file', 'blob', oid)
+            if name.endswith('/go.sum'):
+                continue
+            if private_content(data):
                 failures.append('private content in: '+name)
     return failures
 

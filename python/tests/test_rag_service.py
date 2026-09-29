@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+import unittest
+
+from app.rag_service import FIXTURES, RagService, rag_pb2
+
+
+class Ctx:
+    def __init__(self, active=True):
+        self.active = active
+        self.code = None
+
+    def abort(self, code, details):
+        self.code = code
+        raise RuntimeError(details)
+
+    def is_active(self):
+        return self.active
+
+
+def request_context(**kwargs):
+    defaults = {"request_id": "r1", "tenant_id": "m1-tenant", "user_id": "m1-user",
+                "shop_id": "shop-demo", "allowed_shop_ids": ["shop-demo"]}
+    defaults.update(kwargs)
+    return rag_pb2.RequestContext(**defaults)
+
+
+class RagServiceTests(unittest.TestCase):
+    def test_understand_routes_knowledge_and_facts(self):
+        service = RagService()
+        knowledge = service.Understand(rag_pb2.UnderstandRequest(
+            context=request_context(), query="退货规则"), Ctx())
+        fact = service.Understand(rag_pb2.UnderstandRequest(
+            context=request_context(), query="当前库存"), Ctx())
+        self.assertEqual(knowledge.intent, "knowledge")
+        self.assertEqual(fact.information_source, "facts")
+        self.assertEqual(knowledge.reason, "deterministic_m1_router")
+
+    def test_understand_requests_clarification_for_vague_query(self):
+        response = RagService().Understand(rag_pb2.UnderstandRequest(
+            context=request_context(), query="这个"), Ctx())
+        self.assertEqual(response.intent, "clarification")
+        self.assertLess(response.confidence, 0.5)
+        self.assertTrue(response.clarification)
+        self.assertEqual(response.reason, "m1_missing_subject")
+
+    def test_search_returns_versioned_fixture_and_request_correlation(self):
+        responses = list(RagService().Search(rag_pb2.SearchRequest(
+            context=request_context(), query="配送"), Ctx()))
+        self.assertTrue(responses[-1].complete)
+        self.assertEqual(responses[0].evidence[0].document_id, "m1-demo-shipping")
+        self.assertEqual(responses[0].evidence[0].version_id, FIXTURES[0]["version_id"])
+        self.assertIn("M1 隔离验证", responses[0].evidence[0].content)
+        self.assertEqual(responses[0].request_id, "r1")
+        self.assertTrue(responses[0].is_mock)
+
+    def test_search_rejects_cross_tenant_and_cross_shop_scope(self):
+        service = RagService()
+        other_tenant = list(service.Search(rag_pb2.SearchRequest(
+            context=request_context(tenant_id="other"), query="配送"), Ctx()))
+        self.assertEqual(sum(len(response.evidence) for response in other_tenant), 0)
+        responses = list(service.Search(rag_pb2.SearchRequest(
+            context=request_context(shop_id="other", allowed_shop_ids=["other"]), query="配送"), Ctx()))
+        self.assertEqual(sum(len(response.evidence) for response in responses), 0)
+
+    def test_generate_filters_internal_unclassified_and_ineligible_evidence(self):
+        request = rag_pb2.GenerateRequest(context=request_context(), query="x", evidence=[
+            rag_pb2.Evidence(id="public", content="公开内容", source_type="faq",
+                             shop_id="shop-demo", disclosure_class="external_allowed", customer_eligible=True),
+            rag_pb2.Evidence(id="private", content="内部秘密", source_type="internal",
+                             shop_id="shop-demo", disclosure_class="internal_only", customer_eligible=False),
+            rag_pb2.Evidence(id="unknown", content="未分类秘密", source_type="faq",
+                             shop_id="shop-demo", disclosure_class="unclassified", customer_eligible=True),
+            rag_pb2.Evidence(id="ineligible", content="无资格内容", source_type="faq",
+                             shop_id="shop-demo", disclosure_class="external_allowed", customer_eligible=False),
+        ])
+        events = list(RagService().Generate(request, Ctx()))
+        self.assertIn("公开内容", events[0].delta)
+        self.assertNotIn("内部秘密", events[0].delta)
+        self.assertNotIn("未分类秘密", events[0].delta)
+        self.assertNotIn("无资格内容", events[0].delta)
+        citations = [event.citation.id for event in events if event.WhichOneof("event") == "citation"]
+        self.assertEqual(citations, ["public"])
+        self.assertTrue(any(event.WhichOneof("event") == "is_mock" and event.is_mock for event in events))
+        self.assertTrue(any(event.WhichOneof("event") == "can_copy" and not event.can_copy for event in events))
+
+    def test_missing_tenant_is_rejected(self):
+        with self.assertRaises(RuntimeError):
+            list(RagService().Search(rag_pb2.SearchRequest(query="x"), Ctx()))
+        with self.assertRaises(RuntimeError):
+            RagService().Understand(rag_pb2.UnderstandRequest(query="x"), Ctx())
+
+    def test_cancelled_generate_stops_without_output(self):
+        request = rag_pb2.GenerateRequest(context=request_context(), query="x")
+        self.assertEqual(list(RagService().Generate(request, Ctx(active=False))), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

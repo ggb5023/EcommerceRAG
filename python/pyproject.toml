@@ -9,4 +9,4 @@ dependencies = [
   "grpcio-reflection>=1.70,<2",
 ]
 [dependency-groups]
-dev = ["grpcio-tools>=1.70,<2", "ruff>=0.11,<1"]
+dev = ["grpcio-tools>=1.70,<2", "pytest>=8,<9", "ruff>=0.11,<1"]

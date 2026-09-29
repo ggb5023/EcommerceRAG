@@ -11,5 +11,6 @@ shellcheck -S warning scripts/*.sh docker/db/*.sh docker/db/init/*.sh
 (cd python; uv sync --frozen; uv run ruff check app; uv run python -c 'from app.providers.contracts import EmbeddingResult; from app import server')
 buf lint
 buf build -o /dev/null
+buf breaking --against .git#branch=main
 (cd web; npm ci --no-audit --no-fund; npm run build)
 echo "PASS foundation checks (business and real API tests not included)"
