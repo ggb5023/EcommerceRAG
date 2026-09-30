@@ -45,6 +45,11 @@ browser=''
 for candidate in chromium chromium-browser google-chrome; do
   if command -v "$candidate" >/dev/null 2>&1; then browser=$candidate; break; fi
 done
+if [[ -z "$browser" ]]; then
+  for candidate in "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/chromium-*/chrome-linux/chrome; do
+    if [[ -x "$candidate" ]]; then browser="playwright:$candidate"; break; fi
+  done
+fi
 if [[ -n "$browser" ]]; then
   report browser READY "$browser available; run the four-viewport manual/Playwright check"
 else
