@@ -3,9 +3,9 @@
   "case_count": 60,
   "source_type": "synthetic",
   "license": "internal-generated",
-  "generated_at": "2026-09-29",
-  "sha256": "b49da7594ad1e6b7caede08efc8ee886f7bf9a0f1a2febb99c3b4be8a24a161c",
-  "pipeline_version": "m2-eval-scaffold-v1",
+  "generated_at": "2026-09-30",
+  "sha256": "296707d4b048142443816e1ce3d170510a0a718e9bfa0479de9fac33e80d81dc",
+  "pipeline_version": "m2-eval-concrete-v1",
   "model_version": "unset",
   "real_service_acceptance": false
 }

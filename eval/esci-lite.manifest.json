@@ -1,0 +1,12 @@
+{
+  "dataset": "ESCI-lite",
+  "official_source_url": "https://github.com/amazon-science/esci-data",
+  "version": "not-downloaded",
+  "license_status": "pending-verification-before-download",
+  "recorded_at": "2026-09-30",
+  "expected_filename": "esci-lite.jsonl",
+  "sha256": null,
+  "intended_use": "product retrieval and ranking baseline only",
+  "real_service_acceptance": false,
+  "raw_data_in_repository": false
+}
