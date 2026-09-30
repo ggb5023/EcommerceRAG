@@ -220,7 +220,70 @@ func (g *gateway) getConversation(w http.ResponseWriter, r *http.Request) {
 		}
 		messages = append(messages, map[string]any{"role": role, "content": content, "request_id": requestID, "mock": role == "assistant"})
 	}
-	writeJSON(w, 200, map[string]any{"id": r.PathValue("id"), "title": title, "messages": messages})
+	var latestTurnID int64
+	var latestRequest, latestStatus string
+	var latestAnswer *string
+	var latestMock bool
+	err = g.db.QueryRow(r.Context(), `SELECT t.id,t.request_id,t.status,t.answer,e.is_mock
+		FROM turn t JOIN conversation_execution e ON e.tenant_id=t.tenant_id AND e.turn_id=t.id
+		WHERE t.tenant_id=$1 AND t.conversation_id=$2
+		ORDER BY t.turn_no DESC,e.execution_no DESC LIMIT 1`, g.session.tenantID, id).
+		Scan(&latestTurnID, &latestRequest, &latestStatus, &latestAnswer, &latestMock)
+	evidence := make([]map[string]any, 0)
+	citations := make([]map[string]any, 0)
+	var reply *string
+	var canCopy bool
+	blockedReason := ""
+	if latestRequest != "" {
+		erows, eerr := g.db.Query(r.Context(), `SELECT es.evidence_id,COALESCE(es.document_id,''),COALESCE(es.version_id,''),
+			COALESCE(es.source_ref,''),es.content,es.disclosure_class,es.customer_eligible,es.citation_index
+			FROM evidence_snapshot es JOIN conversation_execution e ON e.tenant_id=es.tenant_id AND e.id=es.execution_id
+			WHERE e.tenant_id=$1 AND e.request_id=$2 ORDER BY es.citation_index`, g.session.tenantID, latestRequest)
+		if eerr == nil {
+			for erows.Next() {
+				var evidenceID, documentID, versionID, sourceRef, content, disclosure string
+				var eligible bool
+				var citationIndex *int
+				if erows.Scan(&evidenceID, &documentID, &versionID, &sourceRef, &content, &disclosure, &eligible, &citationIndex) == nil {
+					evidence = append(evidence, map[string]any{"id": evidenceID, "title": documentID, "snippet": content,
+						"sourceType": disclosure, "documentId": documentID, "versionId": versionID, "sourceRef": sourceRef,
+						"score": 1.0, "citationIndex": citationIndex, "customerEligible": eligible})
+				}
+			}
+			erows.Close()
+		}
+		crows, cerr := g.db.Query(r.Context(), `SELECT c.evidence_id,c.citation_index
+			FROM citation c JOIN conversation_execution e ON e.tenant_id=c.tenant_id AND e.id=c.execution_id
+			WHERE c.tenant_id=$1 AND e.request_id=$2 ORDER BY c.citation_index`, g.session.tenantID, latestRequest)
+		if cerr == nil {
+			for crows.Next() {
+				var evidenceID string
+				var citationIndex int
+				if crows.Scan(&evidenceID, &citationIndex) == nil {
+					citations = append(citations, map[string]any{"evidence_id": evidenceID, "citation_index": citationIndex})
+				}
+			}
+			crows.Close()
+		}
+		_ = g.db.QueryRow(r.Context(), `SELECT text_plain,can_copy,COALESCE(blocked_reason,'')
+			FROM customer_reply cr JOIN conversation_execution e ON e.tenant_id=cr.tenant_id AND e.id=cr.execution_id
+			WHERE e.tenant_id=$1 AND e.request_id=$2`, g.session.tenantID, latestRequest).
+			Scan(&reply, &canCopy, &blockedReason)
+		if latestMock {
+			canCopy = false
+			blockedReason = "mock"
+		}
+	}
+	result := map[string]any{"id": r.PathValue("id"), "title": title, "messages": messages,
+		"evidence": evidence, "citations": citations}
+	if latestRequest != "" {
+		result["last_turn"] = map[string]any{"turn_id": strconv.FormatInt(latestTurnID, 10), "request_id": latestRequest, "status": latestStatus,
+			"answer": latestAnswer, "is_mock": latestMock, "evidence": evidence, "citations": citations,
+			"customer_reply": map[string]any{"text_plain": reply, "can_copy": canCopy, "blocked_reason": blockedReason}}
+		result["lastReply"] = latestAnswer
+		result["lastReplyCopyable"] = canCopy
+	}
+	writeJSON(w, 200, result)
 }
 
 func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
@@ -375,6 +438,28 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 		"is_mock": true, "events_url": "/v1/turns/" + requestID + "/events"})
 }
 
+func (g *gateway) historySummary(ctx context.Context, conversationID, currentTurnID int64) string {
+	rows, err := g.db.Query(ctx, `SELECT m.role, COALESCE(m.content,'')
+		FROM message m JOIN turn t ON t.tenant_id=m.tenant_id AND t.id=m.turn_id
+		WHERE t.tenant_id=$1 AND t.conversation_id=$2 AND t.id<>$3
+		ORDER BY t.turn_no DESC,m.created_at DESC LIMIT 6`, g.session.tenantID, conversationID, currentTurnID)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	parts := make([]string, 0, 6)
+	for rows.Next() {
+		var role, content string
+		if rows.Scan(&role, &content) == nil && strings.TrimSpace(content) != "" {
+			parts = append(parts, role+": "+content)
+		}
+	}
+	for left, right := 0, len(parts)-1; left < right; left, right = left+1, right-1 {
+		parts[left], parts[right] = parts[right], parts[left]
+	}
+	return strings.Join(parts, "\n")
+}
+
 func (g *gateway) runTurn(ctx context.Context, requestID string, conversationID, turnID, executionID int64, query string) {
 	defer func() {
 		g.mu.Lock()
@@ -423,7 +508,8 @@ func (g *gateway) runTurn(ctx context.Context, requestID string, conversationID,
 	_ = writeEvent("status", map[string]any{"type": "status", "status": "EXECUTING", "is_mock": true})
 	base := &ragv1.RequestContext{RequestId: requestID, TenantId: g.session.tenant, UserId: g.session.user,
 		ShopId: g.session.shop, Role: g.session.role, AllowedShopIds: []string{g.session.shop}, PermissionRevision: "m1-seed-v1"}
-	routed, err := g.rag.Understand(ctx, &ragv1.UnderstandRequest{Context: base, Query: query})
+	routed, err := g.rag.Understand(ctx, &ragv1.UnderstandRequest{Context: base, Query: query,
+		HistorySummary: g.historySummary(ctx, conversationID, turnID)})
 	if err != nil {
 		state, code := grpcFailure(ctx, err)
 		finish(state, code, "")

@@ -17,6 +17,23 @@ export interface Evidence {
   versionId: string
   sourceRef?: string
   score: number
+  citationIndex?: number | null
+  customerEligible?: boolean
+}
+export interface CustomerReply {
+  text_plain?: string | null
+  can_copy: boolean
+  blocked_reason?: string
+}
+export interface LastTurn {
+  turn_id: string
+  request_id: string
+  status: string
+  answer?: string | null
+  is_mock: boolean
+  evidence: Evidence[]
+  citations: Array<{ evidence_id: string; citation_index: number }>
+  customer_reply: CustomerReply
 }
 export interface Conversation {
   id: string
@@ -26,6 +43,8 @@ export interface Conversation {
   evidence?: Evidence[]
   lastReply?: string
   lastReplyCopyable?: boolean
+  citations?: Array<{ evidence_id: string; citation_index: number }>
+  last_turn?: LastTurn
 }
 export interface Turn { id: string; request_id?: string; status?: string; events_url?: string }
 export interface TurnEvent {

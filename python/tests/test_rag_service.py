@@ -43,6 +43,18 @@ class RagServiceTests(unittest.TestCase):
         self.assertTrue(response.clarification)
         self.assertEqual(response.reason, "m1_missing_subject")
 
+    def test_understand_requests_clarification_for_vague_followup_without_history(self):
+        response = RagService().Understand(rag_pb2.UnderstandRequest(
+            context=request_context(), query="那个怎么样？"), Ctx())
+        self.assertEqual(response.intent, "clarification")
+        self.assertEqual(response.reason, "m1_missing_subject")
+
+    def test_vague_followup_uses_explicit_history(self):
+        response = RagService().Understand(rag_pb2.UnderstandRequest(
+            context=request_context(), query="那个怎么样？", history_summary="user: 保温杯容量是多少？"), Ctx())
+        self.assertEqual(response.intent, "knowledge")
+        self.assertIn("保温杯容量", response.rewritten_query)
+
     def test_search_returns_versioned_fixture_and_request_correlation(self):
         responses = list(RagService().Search(rag_pb2.SearchRequest(
             context=request_context(), query="配送"), Ctx()))
@@ -52,6 +64,20 @@ class RagServiceTests(unittest.TestCase):
         self.assertIn("M1 隔离验证", responses[0].evidence[0].content)
         self.assertEqual(responses[0].request_id, "r1")
         self.assertTrue(responses[0].is_mock)
+
+    def test_search_selects_different_deterministic_fixtures(self):
+        bottle = list(RagService().Search(rag_pb2.SearchRequest(
+            context=request_context(), query="保温杯容量是多少"), Ctx()))
+        care = list(RagService().Search(rag_pb2.SearchRequest(
+            context=request_context(), query="毛巾可以烘干吗"), Ctx()))
+        self.assertEqual(bottle[0].evidence[0].document_id, "m1-demo-bottle")
+        self.assertEqual(care[0].evidence[0].document_id, "m1-demo-care")
+
+    def test_search_returns_no_evidence_for_unknown_query(self):
+        responses = list(RagService().Search(rag_pb2.SearchRequest(
+            context=request_context(), query="未覆盖的问题"), Ctx()))
+        self.assertTrue(responses[-1].complete)
+        self.assertEqual(sum(len(response.evidence) for response in responses), 0)
 
     def test_search_rejects_cross_tenant_and_cross_shop_scope(self):
         service = RagService()

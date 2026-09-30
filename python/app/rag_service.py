@@ -7,6 +7,7 @@ data completely out of the first milestone.
 """
 from __future__ import annotations
 
+import re
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,60 @@ def _load_fixture() -> dict[str, str]:
     }
 
 
-FIXTURES = (_load_fixture(),)
+_SHIPPING = _load_fixture()
+_SYNTHETIC_FIXTURES = (
+    {
+        "id": "ev-m1-bottle", "tenant_id": "m1-tenant", "shop_id": "shop-demo",
+        "content": "保温杯容量为480毫升，杯口直径为6厘米。本文仅用于 M1 隔离验证。",
+        "source_type": "markdown_fixture", "source_ref": "fixture://m1/bottle",
+        "document_id": "m1-demo-bottle", "version_id": "m1-bottle-v1",
+        "disclosure_class": "external_allowed",
+    },
+    {
+        "id": "ev-m1-care", "tenant_id": "m1-tenant", "shop_id": "shop-demo",
+        "content": "竹纤维毛巾建议低温烘干，避免高温损伤纤维。本文仅用于 M1 隔离验证。",
+        "source_type": "markdown_fixture", "source_ref": "fixture://m1/care",
+        "document_id": "m1-demo-care", "version_id": "m1-care-v1",
+        "disclosure_class": "external_allowed",
+    },
+    {
+        "id": "ev-m1-storage", "tenant_id": "m1-tenant", "shop_id": "shop-demo",
+        "content": "蓝色收纳箱有低款和高款两个版本，具体尺寸应按型号确认。本文仅用于 M1 隔离验证。",
+        "source_type": "markdown_fixture", "source_ref": "fixture://m1/storage",
+        "document_id": "m1-demo-storage", "version_id": "m1-storage-v1",
+        "disclosure_class": "external_allowed",
+    },
+    {
+        "id": "ev-m1-unanswerable", "tenant_id": "m1-tenant", "shop_id": "shop-demo",
+        "content": "现有隔离资料没有覆盖该问题，不能据此作出确定承诺。本文仅用于 M1 隔离验证。",
+        "source_type": "markdown_fixture", "source_ref": "fixture://m1/unanswerable",
+        "document_id": "m1-demo-unanswerable", "version_id": "m1-unanswerable-v1",
+        "disclosure_class": "external_allowed",
+    },
+)
+FIXTURES = (_SHIPPING, *_SYNTHETIC_FIXTURES)
+
+
+def _is_vague(query: str) -> bool:
+    normalized = re.sub(r"\s+", "", query.lower())
+    if normalized in {"还有吗", "怎么办", "如何处理"}:
+        return True
+    return bool(re.fullmatch(r"(?:这|那|它|这个|那个)(?:个)?(?:怎么样|如何|好吗|行吗|可以吗|呢)?[？?]?'?", normalized))
+
+
+def _fixture_matches(query: str) -> list[dict[str, str]]:
+    lowered = query.lower()
+    if any(word in lowered for word in ("配送", "退货", "签收", "工作日")):
+        return [_SHIPPING]
+    if any(word in lowered for word in ("保温杯", "容量", "杯口")):
+        return [FIXTURES[1]]
+    if any(word in lowered for word in ("毛巾", "烘干", "羊毛", "洗护")):
+        return [FIXTURES[2]]
+    if any(word in lowered for word in ("收纳箱", "蓝色", "尺寸", "大小")):
+        return [FIXTURES[3]]
+    if any(word in lowered for word in ("热油", "保证", "能否", "安全")):
+        return [FIXTURES[4]]
+    return []
 
 
 def _allowed(ctx: Any, fixture: dict[str, str]) -> bool:
@@ -52,9 +106,13 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
             context.abort(grpc.StatusCode.PERMISSION_DENIED, "tenant context is required")
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
-        normalized = "".join(query.lower().split())
-        vague_queries = {"这个", "那个", "这个呢", "那个呢", "它呢", "还有吗", "怎么办", "如何处理"}
-        if normalized in vague_queries or len(query) <= 2:
+        if _is_vague(query) or len(query) <= 2:
+            if request.history_summary.strip():
+                return rag_pb2.UnderstandResponse(
+                    rewritten_query=request.history_summary.strip() + "\n补充问题：" + query,
+                    intent="knowledge", information_source="knowledge", confidence=0.7,
+                    reason="deterministic_m1_history_context",
+                )
             return rag_pb2.UnderstandResponse(
                 rewritten_query=query, intent="clarification", information_source="knowledge",
                 clarification="请补充你指的商品或具体问题，我再查找对应的帮助信息。",
@@ -78,7 +136,7 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
         query = request.query.strip()
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
-        matches = [f for f in FIXTURES if _allowed(request.context, f)]
+        matches = [f for f in _fixture_matches(query) if _allowed(request.context, f)]
         for index, fixture in enumerate(matches, 1):
             yield rag_pb2.SearchResponse(
                 phase="retrieval", complete=False,
@@ -124,4 +182,3 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
 
 def register(server: Any) -> None:
     rag_pb2_grpc.add_RagServiceServicer_to_server(RagService(), server)
-
