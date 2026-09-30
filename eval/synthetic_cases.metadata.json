@@ -1,0 +1,11 @@
+{
+  "eval_set_version": "synthetic-m2-v1",
+  "case_count": 60,
+  "source_type": "synthetic",
+  "license": "internal-generated",
+  "generated_at": "2026-09-29",
+  "sha256": "b49da7594ad1e6b7caede08efc8ee886f7bf9a0f1a2febb99c3b4be8a24a161c",
+  "pipeline_version": "m2-eval-scaffold-v1",
+  "model_version": "unset",
+  "real_service_acceptance": false
+}

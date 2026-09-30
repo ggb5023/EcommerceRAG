@@ -2,6 +2,8 @@
 # All development documents remain private; only the project landing page is published.
 *.md
 !/README.md
+!eval/
+!eval/README.md
 docs/
 .private/
 *.bundle

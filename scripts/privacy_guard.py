@@ -30,7 +30,8 @@ def blocked_path(name):
     private_dirs = {'docs', 'archive', 'backups', '.private', '.local', '.codex', '.workbuddy-ai', '.ssh', '.venv', 'node_modules'}
     if any(part.lower() in private_dirs for part in path.parts):
         return True
-    if path.suffix.lower() in {'.md', '.markdown', '.doc', '.docx', '.pem', '.key', '.dump', '.bundle', '.log', '.bak'} and name != 'README.md':
+    public_markdown = name == 'README.md' or name == 'eval/README.md'
+    if path.suffix.lower() in {'.md', '.markdown', '.doc', '.docx', '.pem', '.key', '.dump', '.bundle', '.log', '.bak'} and not public_markdown:
         return True
     if (base.startswith('.env') or base.endswith('.env')) and not base.endswith('.example'):
         return True
