@@ -11,7 +11,10 @@ policy, factual, freshness, refusal, multi-turn, and authorization scenarios.
 `validate_eval.py` is read-only by default: it checks fields, coverage,
 non-placeholder semantics, dates, source versions, and SHA-256. Passing
 `--review-output` explicitly writes a separate checklist whose 60 rows start
-with `review_status=pending`; the checklist never changes the JSONL hash.
+with `review_status=pending`; the checklist never changes the JSONL hash. The
+default `--review` check verifies that checklist IDs and copied evidence fields
+still match the immutable JSONL and that statuses are one of `pending`,
+`approved`, `needs_revision`, or `rejected`.
 
 The generated set is a development fixture and cannot be used to claim M2
 real-service acceptance. `esci-lite.manifest.json` locks the intended public
@@ -23,3 +26,8 @@ information source, tags, authorization context, business date, and source
 metadata. A real evaluation run must add human verification, retrieval and
 answer metrics, usage, latency, and cost without writing secrets or customer
 content.
+
+The checklist is an evidence record, not an approval mechanism. Only the
+business reviewer may change a row to `approved`; engineering must not infer
+approval from a passing machine precheck. The synthetic set is a verified
+baseline only when all 60 rows are `approved` with no unresolved notes.
