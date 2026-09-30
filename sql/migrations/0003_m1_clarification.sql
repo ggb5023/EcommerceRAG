@@ -8,4 +8,6 @@ ALTER TABLE turn ADD CONSTRAINT turn_parent_turn_fk
     FOREIGN KEY (tenant_id, parent_turn_id) REFERENCES turn(tenant_id, id);
 CREATE INDEX IF NOT EXISTS idx_turn_parent ON turn (tenant_id, parent_turn_id);
 
+INSERT INTO schema_migration(version) VALUES ('0003') ON CONFLICT (version) DO NOTHING;
+
 COMMIT;
