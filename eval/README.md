@@ -14,7 +14,10 @@ non-placeholder semantics, dates, source versions, and SHA-256. Passing
 with `review_status=pending`; the checklist never changes the JSONL hash. The
 default `--review` check verifies that checklist IDs and copied evidence fields
 still match the immutable JSONL and that statuses are one of `pending`,
-`approved`, `needs_revision`, or `rejected`.
+`approved`, `needs_revision`, or `rejected`. Defaults resolve relative to this
+script, so the command can be run from any working directory. It reports
+status counts, missing notes, duplicate IDs, evidence drift, and either
+`PENDING_REVIEW` or `VERIFIED_BASELINE`.
 
 The generated set is a development fixture and cannot be used to claim M2
 real-service acceptance. `esci-lite.manifest.json` locks the intended public

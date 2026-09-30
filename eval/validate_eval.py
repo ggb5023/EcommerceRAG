@@ -53,45 +53,55 @@ def validate(cases_path: Path, metadata_path: Path) -> tuple[list[dict], dict, l
     return cases, metadata, errors
 
 
-def validate_review(review_path: Path, cases: list[dict]) -> list[str]:
+def validate_review(review_path: Path, cases: list[dict]) -> tuple[list[str], collections.Counter, collections.Counter]:
     errors: list[str] = []
+    issue_counts = collections.Counter()
     try:
         review = json.loads(review_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return [f"review file unreadable: {exc}"]
+        return [f"review file unreadable: {exc}"], collections.Counter(), issue_counts
     if not isinstance(review, list):
-        return ["review file must contain a JSON array"]
+        return ["review file must contain a JSON array"], collections.Counter(), issue_counts
     case_by_id = {case["case_id"]: case for case in cases}
     review_ids = [row.get("case_id") for row in review if isinstance(row, dict)]
     if len(review) != len(cases):
         errors.append(f"review_count={len(review)}, expected {len(cases)}")
     if len(review_ids) != len(set(review_ids)):
+        issue_counts["duplicate_case_id"] += 1
         errors.append("duplicate review case_id")
     if set(review_ids) != set(case_by_id):
         errors.append("review case_id set does not match cases")
+    status_counts = collections.Counter()
     for number, row in enumerate(review, 1):
         if not isinstance(row, dict):
             errors.append(f"review row {number} is not an object")
             continue
         case_id = row.get("case_id")
-        if row.get("review_status") not in REVIEW_STATUSES:
+        status = row.get("review_status")
+        status_counts[status] += 1
+        if status not in REVIEW_STATUSES:
             errors.append(f"review row {number} has invalid review_status")
         if not isinstance(row.get("review_notes"), str):
             errors.append(f"review row {number} review_notes must be a string")
+        elif status in {"needs_revision", "rejected"} and not row["review_notes"].strip():
+            issue_counts["missing_notes"] += 1
+            errors.append(f"review row {number} missing notes for {status}")
         source = case_by_id.get(case_id)
         if source:
             for field in ("query", "expected_doc_ids", "expected_answer_points", "intent",
                           "information_source", "authorization"):
                 if row.get(field) != source.get(field):
+                    issue_counts["evidence_drift"] += 1
                     errors.append(f"review row {number} field {field} differs from source")
-    return errors
+    return errors, status_counts, issue_counts
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cases", type=Path, default=Path("eval/synthetic_cases.jsonl"))
-    parser.add_argument("--metadata", type=Path, default=Path("eval/synthetic_cases.metadata.json"))
-    parser.add_argument("--review", type=Path, default=Path("eval/synthetic_cases.review.json"),
+    eval_dir = Path(__file__).resolve().parent
+    parser.add_argument("--cases", type=Path, default=eval_dir / "synthetic_cases.jsonl")
+    parser.add_argument("--metadata", type=Path, default=eval_dir / "synthetic_cases.metadata.json")
+    parser.add_argument("--review", type=Path, default=eval_dir / "synthetic_cases.review.json",
                         help="read-only review checklist validation")
     parser.add_argument("--review-output", type=Path)
     args = parser.parse_args()
@@ -99,16 +109,18 @@ def main() -> int:
     if errors:
         for error in errors: print(f"FAIL {error}")
         return 1
-    review_errors = validate_review(args.review, cases)
+    review_errors, review_counts, issue_counts = validate_review(args.review, cases)
     if review_errors:
         for error in review_errors: print(f"FAIL {error}")
         return 1
     counts = collections.Counter(tag for case in cases for tag in case["tags"])
     print(f"PASS synthetic eval: {len(cases)} cases; sha256={metadata['sha256']}")
     print("coverage=" + json.dumps(dict(sorted(counts.items())), ensure_ascii=False, sort_keys=True))
-    review = json.loads(args.review.read_text(encoding="utf-8"))
-    review_counts = collections.Counter(row["review_status"] for row in review)
     print("review=" + json.dumps(dict(sorted(review_counts.items())), ensure_ascii=False, sort_keys=True))
+    print("review_issues=" + json.dumps(dict(sorted(issue_counts.items())), ensure_ascii=False, sort_keys=True))
+    unresolved = review_counts.get("needs_revision", 0) + review_counts.get("rejected", 0)
+    state = "VERIFIED_BASELINE" if len(cases) == 60 and review_counts.get("approved", 0) == 60 else "PENDING_REVIEW"
+    print(f"review_state={state}; unresolved={unresolved}")
     if args.review_output:
         review = [{"case_id": c["case_id"], "query": c["query"], "expected_doc_ids": c["expected_doc_ids"],
                    "expected_answer_points": c["expected_answer_points"], "intent": c["intent"],
