@@ -6,8 +6,18 @@ import argparse
 import collections
 import hashlib
 import json
-from datetime import datetime, timezone
 from pathlib import Path
+
+
+GATE_REQUIREMENTS = {
+    "identity_roles_revocation": ("identity_owner", "identity source, role catalog, revocation SLA"),
+    "tenant_shop_mapping": ("business_owner", "approved tenant/shop mapping"),
+    "material_authorization_external_allowed": ("business_owner", "approved material authorization and external_allowed list"),
+    "business_date_rules": ("business_owner", "effective-date and freshness rules"),
+    "provider_endpoint_region_models": ("ai_cloud_owner", "endpoint, region and four model IDs"),
+    "provider_embedding_quota_usage_request_id": ("ai_cloud_owner", "1024 dimension, quota, usage and request ID contract"),
+    "material_versions_license_redaction": ("data_owner", "material versions, licenses and redaction rules"),
+}
 
 
 def load_cases(path: Path, expected_sha: str | None) -> list[dict]:
@@ -81,23 +91,35 @@ def semantic_issues(cases: list[dict]) -> list[str]:
     return issues
 
 
-def m2_gate_status() -> dict[str, object]:
+def m2_gate_status(path: Path | None = None) -> tuple[dict[str, object], str | None]:
     """Declare external-input readiness without reading secrets or network state."""
     requirements = {
-        "identity_roles_revocation": {"ready": False, "owner": "identity_owner", "evidence": "identity source, role catalog, revocation SLA"},
-        "tenant_shop_mapping": {"ready": False, "owner": "business_owner", "evidence": "approved tenant/shop mapping"},
-        "material_authorization_external_allowed": {"ready": False, "owner": "business_owner", "evidence": "approved material authorization and external_allowed list"},
-        "business_date_rules": {"ready": False, "owner": "business_owner", "evidence": "effective-date and freshness rules"},
-        "provider_endpoint_region_models": {"ready": False, "owner": "ai_cloud_owner", "evidence": "endpoint, region and four model IDs"},
-        "provider_embedding_quota_usage_request_id": {"ready": False, "owner": "ai_cloud_owner", "evidence": "1024 dimension, quota, usage and request ID contract"},
-        "material_versions_license_redaction": {"ready": False, "owner": "data_owner", "evidence": "material versions, licenses and redaction rules"},
+        key: {"ready": False, "owner": owner, "evidence": evidence}
+        for key, (owner, evidence) in GATE_REQUIREMENTS.items()
     }
+    manifest_sha = None
+    if path is not None:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("requirements"), dict):
+            raise ValueError("gate manifest must contain a requirements object")
+        supplied = payload["requirements"]
+        for key, (owner, evidence) in GATE_REQUIREMENTS.items():
+            row = supplied.get(key)
+            if not isinstance(row, dict):
+                raise ValueError(f"gate manifest missing requirement: {key}")
+            if row.get("owner") != owner or row.get("evidence") != evidence:
+                raise ValueError(f"gate manifest owner/evidence mismatch: {key}")
+            if not isinstance(row.get("ready"), bool):
+                raise ValueError(f"gate manifest ready must be boolean: {key}")
+            requirements[key]["ready"] = row["ready"]
+        manifest_sha = file_sha256(path)
+    status = "READY" if all(row["ready"] for row in requirements.values()) else "BLOCKED"
     return {
-        "status": "BLOCKED",
+        "status": status,
         "real_service_acceptance": False,
         "requirements": requirements,
         "missing": sorted(key for key, value in requirements.items() if not value["ready"]),
-    }
+    }, manifest_sha
 
 
 def load_fixture_doc_ids(path: Path | None) -> set[str] | None:
@@ -176,10 +198,12 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--include-cases", action="store_true", help="Include metadata-only per-case results")
     parser.add_argument("--fixture-doc-ids", type=Path, help="Optional JSON document ID fixture; no document bodies")
+    parser.add_argument("--gate-manifest", type=Path, help="Optional reviewed external-input gate manifest")
     args = parser.parse_args()
     metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
     cases = load_cases(args.cases, metadata.get("sha256"))
     fixture_doc_ids = load_fixture_doc_ids(args.fixture_doc_ids)
+    gate, gate_sha = m2_gate_status(args.gate_manifest)
     counts, coverage, issues = evaluate_cases(cases)
     expected_case_count = metadata.get("case_count")
     if expected_case_count is not None and len(cases) != expected_case_count:
@@ -217,6 +241,8 @@ def main() -> int:
         if fixture_doc_ids is not None
         else None
     )
+    fixture_sha = file_sha256(args.fixture_doc_ids) if args.fixture_doc_ids else None
+    run_material = metadata.get("sha256", "unknown") + (fixture_sha or "") + (gate_sha or "")
     result = {
         "evaluation": "deterministic_mock_retrieval_baseline",
         "eval_set_version": metadata.get("eval_set_version"),
@@ -225,12 +251,12 @@ def main() -> int:
         "pipeline_version": metadata.get("pipeline_version"),
         "run": {
             "mode": "deterministic_mock",
-            "run_id": "local-deterministic-" + metadata.get("sha256", "unknown")[:12],
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "fixture_sha256": file_sha256(args.fixture_doc_ids) if args.fixture_doc_ids else None,
+            "run_id": "local-deterministic-" + hashlib.sha256(run_material.encode("ascii")).hexdigest()[:12],
+            "fixture_sha256": fixture_sha,
+            "gate_manifest_sha256": gate_sha,
         },
         "real_service_acceptance": False,
-        "m2_gate": m2_gate_status(),
+        "m2_gate": gate,
         "results": {
             "retrieval_cases": counts["retrieval"],
             "refusal_cases": counts["refusal"],

@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -109,12 +111,26 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertEqual(failed, ["bad"])
 
     def test_m2_gate_is_blocked_until_external_inputs_are_recorded(self):
-        gate = MODULE.m2_gate_status()
+        gate, manifest_sha = MODULE.m2_gate_status()
         self.assertEqual(gate["status"], "BLOCKED")
         self.assertFalse(gate["real_service_acceptance"])
         self.assertEqual(len(gate["missing"]), 7)
+        self.assertIsNone(manifest_sha)
         self.assertEqual(gate["requirements"]["provider_endpoint_region_models"]["owner"], "ai_cloud_owner")
         self.assertIn("endpoint", gate["requirements"]["provider_endpoint_region_models"]["evidence"])
+
+    def test_reviewed_gate_manifest_can_be_ready_without_claiming_real_acceptance(self):
+        requirements = {
+            key: {"ready": True, "owner": owner, "evidence": evidence}
+            for key, (owner, evidence) in MODULE.GATE_REQUIREMENTS.items()
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "gate.json"
+            manifest.write_text(json.dumps({"requirements": requirements}))
+            gate, manifest_sha = MODULE.m2_gate_status(manifest)
+        self.assertEqual(gate["status"], "READY")
+        self.assertFalse(gate["real_service_acceptance"])
+        self.assertTrue(manifest_sha)
 
     def test_report_hash_ignores_timestamp(self):
         first = {"run": {"started_at": "2026-01-01T00:00:00Z"}, "results": {"count": 1}}

@@ -63,6 +63,11 @@ are recorded in the project process.
 Reports include `report_sha256`, calculated from canonical stable content while
 excluding the run timestamp and the hash field itself, so archived reports can
 be compared without treating timestamps as evaluation changes.
+The default report contains no runtime timestamp and is byte-identical across
+repeated runs. A reviewed external-input gate manifest may be supplied with
+`--gate-manifest`; it must match the owner/evidence contract for all seven
+requirements. Even a `READY` gate does not claim real-service acceptance or
+invoke a provider.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer
