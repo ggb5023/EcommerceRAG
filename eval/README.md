@@ -32,8 +32,10 @@ content.
 
 `run_mock_retrieval.py` produces a read-only deterministic baseline summary,
 validates the input SHA-256, and reports retrieval, evidence coverage, refusal,
-unauthorized, and multi-turn classification counts. Its output is not M2
-real-service acceptance.
+unauthorized, and multi-turn classification counts. `--include-cases` adds
+metadata-only per-case results (case ID, classification, tags, authorization
+scope, and expected evidence count); it never emits query or answer text.
+Its output is not M2 real-service acceptance.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer

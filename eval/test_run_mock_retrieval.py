@@ -1,0 +1,47 @@
+import importlib.util
+import unittest
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).with_name("run_mock_retrieval.py")
+SPEC = importlib.util.spec_from_file_location("run_mock_retrieval", MODULE_PATH)
+MODULE = importlib.util.module_from_spec(SPEC)
+assert SPEC and SPEC.loader
+SPEC.loader.exec_module(MODULE)
+
+
+class MockRetrievalEvaluationTests(unittest.TestCase):
+    def test_classifies_refusal_unauthorized_and_clarification(self):
+        cases = [
+            {"case_id": "r", "tags": ["unanswerable"]},
+            {"case_id": "u", "tags": ["unauthorized"]},
+            {"case_id": "c", "tags": ["multi_turn"]},
+        ]
+        self.assertEqual([MODULE.classify(case) for case in cases], ["refusal", "unauthorized", "clarification"])
+
+    def test_integrity_reports_missing_documents_duplicate_ids_and_tag_conflict(self):
+        cases = [
+            {"case_id": "x", "tags": ["authorized", "unauthorized"], "expected_doc_ids": []},
+            {"case_id": "x", "tags": [], "expected_doc_ids": []},
+        ]
+        _, _, issues = MODULE.evaluate_cases(cases)
+        self.assertIn("missing_expected_docs:x", issues)
+        self.assertIn("duplicate_or_missing_case_id:x", issues)
+
+    def test_case_results_are_metadata_only(self):
+        case = {
+            "case_id": "synth-001",
+            "query": "private query text",
+            "tags": ["synthetic", "product_knowledge"],
+            "expected_doc_ids": ["doc-1"],
+            "authorization": {"scope": "tenant_shop"},
+        }
+        result = MODULE.case_results([case])[0]
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["authorization_scope"], "tenant_shop")
+        self.assertNotIn("query", result)
+        self.assertNotIn("private query text", str(result))
+
+
+if __name__ == "__main__":
+    unittest.main()

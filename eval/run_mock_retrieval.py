@@ -36,6 +36,24 @@ def evaluate_cases(cases: list[dict]) -> tuple[collections.Counter, collections.
     return counts, coverage, issues
 
 
+def case_results(cases: list[dict]) -> list[dict]:
+    """Return stable, metadata-only per-case results for audit and diffing."""
+    results = []
+    for case in cases:
+        expected_docs = case.get("expected_doc_ids", [])
+        kind = classify(case)
+        results.append({
+            "case_id": case.get("case_id"),
+            "classification": kind,
+            "expected_doc_count": len(expected_docs),
+            "evidence_expected": bool(expected_docs),
+            "tags": sorted(case.get("tags", [])),
+            "authorization_scope": case.get("authorization", {}).get("scope"),
+            "status": "PASS" if expected_docs or kind in {"refusal", "unauthorized", "clarification"} else "FAIL",
+        })
+    return results
+
+
 def classify(case: dict) -> str:
     tags = set(case.get("tags", []))
     if "unauthorized" in tags:
@@ -53,6 +71,7 @@ def main() -> int:
     parser.add_argument("--cases", type=Path, default=root / "synthetic_cases.jsonl")
     parser.add_argument("--metadata", type=Path, default=root / "synthetic_cases.metadata.json")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--include-cases", action="store_true", help="Include metadata-only per-case results")
     args = parser.parse_args()
     metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
     cases = load_cases(args.cases, metadata.get("sha256"))
@@ -97,6 +116,8 @@ def main() -> int:
         },
         "notes": ["Local deterministic fixture classification only; no model, network, or customer data."],
     }
+    if args.include_cases:
+        result["case_results"] = case_results(cases)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.output:
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
