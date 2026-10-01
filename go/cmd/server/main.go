@@ -68,17 +68,31 @@ func main() {
 		log.Fatalf("ping database: %v", err)
 	}
 	var session mockSession
-	err = db.QueryRow(ctx, `
+	syntheticMode := os.Getenv("SYNTHETIC_MANIFEST") != ""
+	if syntheticMode {
+		err = db.QueryRow(ctx, `
+		SELECT t.id, u.id, 'demo-tenant-a', 'demo-agent-east', 'demo-shop-east', 'operator'
+		FROM tenant t JOIN app_user u ON u.tenant_id=t.id
+		JOIN shop s ON s.tenant_id=t.id AND s.id='demo-shop-east'
+		WHERE t.name='Synthetic ecommerce demo v1' AND t.status='active'
+		  AND u.external_id='demo-agent-east' AND u.role='operator' AND s.status='active'
+		ORDER BY t.id DESC LIMIT 1`).Scan(&session.tenantID, &session.userID, &session.tenant,
+			&session.user, &session.shop, &session.role)
+	} else {
+		err = db.QueryRow(ctx, `
 		SELECT t.id, u.id, 'm1-tenant', 'm1-user', 'shop-demo', 'operator'
 		FROM tenant t JOIN app_user u ON u.tenant_id=t.id
 		JOIN shop s ON s.tenant_id=t.id AND s.id='shop-demo'
 		WHERE t.name='M1 isolated prototype' AND t.status='active'
 		  AND u.external_id='m1-user' AND u.role='operator' AND s.status='active'
 		ORDER BY t.id DESC LIMIT 1`).Scan(
-		&session.tenantID, &session.userID, &session.tenant,
-		&session.user, &session.shop, &session.role,
-	)
+			&session.tenantID, &session.userID, &session.tenant,
+			&session.user, &session.shop, &session.role)
+	}
 	if err != nil {
+		if syntheticMode {
+			log.Fatalf("load synthetic mock session (apply synthetic seed first): %v", err)
+		}
 		log.Fatalf("load mock session (apply migrations first): %v", err)
 	}
 	conn, err := grpc.NewClient(ragAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -87,12 +101,17 @@ func main() {
 	}
 	g := &gateway{db: db, rag: ragv1.NewRagServiceClient(conn), session: session, cancels: map[string]context.CancelFunc{}}
 	seedCtx, seedCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	fixture, imported, err := g.importM1Fixture(seedCtx)
-	seedCancel()
-	if err != nil {
-		log.Fatalf("import M1 markdown fixture: %v", err)
+	if !syntheticMode {
+		fixture, imported, fixtureErr := g.importM1Fixture(seedCtx)
+		if fixtureErr != nil {
+			seedCancel()
+			log.Fatalf("import M1 markdown fixture: %v", fixtureErr)
+		}
+		log.Printf("M1 fixture %s version %s imported=%t", fixture.documentID, fixture.versionID, imported)
+	} else {
+		log.Printf("synthetic manifest mode enabled: %s", os.Getenv("SYNTHETIC_MANIFEST"))
 	}
-	log.Printf("M1 fixture %s version %s imported=%t", fixture.documentID, fixture.versionID, imported)
+	seedCancel()
 	mux := g.routes()
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
