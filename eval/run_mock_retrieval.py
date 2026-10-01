@@ -84,19 +84,19 @@ def semantic_issues(cases: list[dict]) -> list[str]:
 def m2_gate_status() -> dict[str, object]:
     """Declare external-input readiness without reading secrets or network state."""
     requirements = {
-        "identity_roles_revocation": False,
-        "tenant_shop_mapping": False,
-        "material_authorization_external_allowed": False,
-        "business_date_rules": False,
-        "provider_endpoint_region_models": False,
-        "provider_embedding_quota_usage_request_id": False,
-        "material_versions_license_redaction": False,
+        "identity_roles_revocation": {"ready": False, "owner": "identity_owner", "evidence": "identity source, role catalog, revocation SLA"},
+        "tenant_shop_mapping": {"ready": False, "owner": "business_owner", "evidence": "approved tenant/shop mapping"},
+        "material_authorization_external_allowed": {"ready": False, "owner": "business_owner", "evidence": "approved material authorization and external_allowed list"},
+        "business_date_rules": {"ready": False, "owner": "business_owner", "evidence": "effective-date and freshness rules"},
+        "provider_endpoint_region_models": {"ready": False, "owner": "ai_cloud_owner", "evidence": "endpoint, region and four model IDs"},
+        "provider_embedding_quota_usage_request_id": {"ready": False, "owner": "ai_cloud_owner", "evidence": "1024 dimension, quota, usage and request ID contract"},
+        "material_versions_license_redaction": {"ready": False, "owner": "data_owner", "evidence": "material versions, licenses and redaction rules"},
     }
     return {
         "status": "BLOCKED",
         "real_service_acceptance": False,
         "requirements": requirements,
-        "missing": sorted(key for key, ready in requirements.items() if not ready),
+        "missing": sorted(key for key, value in requirements.items() if not value["ready"]),
     }
 
 

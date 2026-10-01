@@ -113,6 +113,8 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertEqual(gate["status"], "BLOCKED")
         self.assertFalse(gate["real_service_acceptance"])
         self.assertEqual(len(gate["missing"]), 7)
+        self.assertEqual(gate["requirements"]["provider_endpoint_region_models"]["owner"], "ai_cloud_owner")
+        self.assertIn("endpoint", gate["requirements"]["provider_endpoint_region_models"]["evidence"])
 
 
 if __name__ == "__main__":

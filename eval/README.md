@@ -57,7 +57,9 @@ Every report also contains an `m2_gate` object. It remains `BLOCKED` until
 identity/role revocation, tenant/shop mapping, material authorization,
 business-date rules, Provider contract, and material version/license/redaction
 inputs are separately recorded. The evaluator never infers readiness from
-local fixtures.
+local fixtures. Each gate item includes its accountable owner and the evidence
+needed to mark it ready; readiness values remain false until reviewed inputs
+are recorded in the project process.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer
