@@ -17,6 +17,25 @@ def load_cases(path: Path, expected_sha: str | None) -> list[dict]:
     return [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
 
 
+def evaluate_cases(cases: list[dict]) -> tuple[collections.Counter, collections.Counter, list[str]]:
+    counts = collections.Counter(classify(case) for case in cases)
+    coverage = collections.Counter()
+    issues: list[str] = []
+    seen_ids: set[str] = set()
+    for case in cases:
+        case_id = case.get("case_id", "")
+        if not case_id or case_id in seen_ids:
+            issues.append(f"duplicate_or_missing_case_id:{case_id or '<missing>'}")
+        seen_ids.add(case_id)
+        expected_docs = case.get("expected_doc_ids", [])
+        if not expected_docs:
+            tags = set(case.get("tags", []))
+            if not ({"unanswerable", "negative", "unauthorized"} & tags):
+                issues.append(f"missing_expected_docs:{case_id}")
+        coverage.update(case.get("tags", []))
+    return counts, coverage, issues
+
+
 def classify(case: dict) -> str:
     tags = set(case.get("tags", []))
     if "unauthorized" in tags:
@@ -37,10 +56,18 @@ def main() -> int:
     args = parser.parse_args()
     metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
     cases = load_cases(args.cases, metadata.get("sha256"))
-    counts = collections.Counter(classify(case) for case in cases)
-    coverage = collections.Counter()
+    counts, coverage, issues = evaluate_cases(cases)
+    expected_case_count = metadata.get("case_count")
+    if expected_case_count is not None and len(cases) != expected_case_count:
+        issues.append(f"case_count_mismatch:{len(cases)}!={expected_case_count}")
+    tag_conflicts = []
     for case in cases:
-        coverage.update(case.get("tags", []))
+        tags = set(case.get("tags", []))
+        if "authorized" in tags and "unauthorized" in tags:
+            tag_conflicts.append(case.get("case_id", "<missing>"))
+    issues.extend(f"conflicting_tags:{case_id}" for case_id in tag_conflicts)
+    retrieval_total = counts["retrieval"]
+    evidence_total = sum(bool(case.get("expected_doc_ids")) for case in cases)
     result = {
         "evaluation": "deterministic_mock_retrieval_baseline",
         "eval_set_version": metadata.get("eval_set_version"),
@@ -52,9 +79,22 @@ def main() -> int:
             "refusal_cases": counts["refusal"],
             "unauthorized_cases": counts["unauthorized"],
             "clarification_cases": counts["clarification"],
-            "evidence_coverage_cases": sum(bool(case.get("expected_doc_ids")) for case in cases),
+            "evidence_coverage_cases": evidence_total,
+            "evidence_coverage_rate": round(evidence_total / len(cases), 4) if cases else 0,
+            "retrieval_cases_with_expected_docs": sum(
+                bool(case.get("expected_doc_ids"))
+                for case in cases
+                if classify(case) == "retrieval"
+            ),
+            "retrieval_case_rate": round(retrieval_total / len(cases), 4) if cases else 0,
         },
         "tag_coverage": dict(sorted(coverage.items())),
+        "input_integrity": {
+            "expected_case_count": expected_case_count,
+            "actual_case_count": len(cases),
+            "issues": issues,
+            "status": "PASS" if not issues else "FAIL",
+        },
         "notes": ["Local deterministic fixture classification only; no model, network, or customer data."],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
