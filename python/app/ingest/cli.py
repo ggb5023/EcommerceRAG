@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-ALLOWED_FORMATS = {"csv", "markdown"}
+ALLOWED_FORMATS = {"csv", "markdown", "yaml"}
 ALLOWED_DISCLOSURE = {"external_allowed", "internal_only", "unclassified"}
 ALLOWED_ROLES = {"owner", "admin", "operator", "viewer"}
 STATE_ROOT = Path(".local/ingest-state")
@@ -160,7 +160,8 @@ def validate_manifest(manifest_path: Path) -> ValidationResult:
         fmt = _nonempty(document.get("format"), f"{prefix}.format", errors)
         if fmt not in ALLOWED_FORMATS:
             errors.append(f"{prefix}.format: unsupported format {fmt!r}")
-        if Path(relative).suffix.lower() not in ({".csv"} if fmt == "csv" else {".md", ".markdown"}):
+        extensions = {".csv"} if fmt == "csv" else ({".md", ".markdown"} if fmt == "markdown" else {".yaml", ".yml"})
+        if Path(relative).suffix.lower() not in extensions:
             errors.append(f"{prefix}.path: extension does not match format")
         tenant_id = _nonempty(document.get("tenant_id"), f"{prefix}.tenant_id", errors)
         shop_id = _nonempty(document.get("shop_id"), f"{prefix}.shop_id", errors)
@@ -237,11 +238,16 @@ def import_dataset(result: ValidationResult) -> tuple[bool, str]:
             for row_no, row in enumerate(rows, 2):
                 text = " ".join(f"{key}: {value}" for key, value in row.items() if value)
                 records.append({"document_id": document_id, "record_id": f"{document_id}:{row_no}", "text": text, **info})
-        else:
+        elif info["format"] == "markdown":
             for number, block in enumerate(re.split(r"\n\s*\n", content), 1):
                 block = block.strip()
                 if block and not block.startswith("---"):
                     records.append({"document_id": document_id, "record_id": f"{document_id}:{number}", "text": block, **info})
+        else:
+            parsed = yaml.safe_load(content)
+            if not isinstance(parsed, dict):
+                raise ValueError(f"{document_id}: YAML document must be a mapping")
+            records.append({"document_id": document_id, "record_id": f"{document_id}:1", "text": json.dumps(parsed, ensure_ascii=False, sort_keys=True), **info})
     payload = {
         "dataset_id": dataset_id,
         "pipeline_version": result.manifest["pipeline_version"],

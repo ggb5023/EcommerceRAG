@@ -18,4 +18,4 @@ python -m app.ingest import --manifest data/synthetic/ecommerce-demo-v1/manifest
 python -m app.ingest status --dataset ecommerce-demo-v1
 ```
 
-首版导入器使用本地文件和 `.local/ingest-state` 状态目录，不接入 OSS、PostgreSQL、真实身份、在线 Provider 或客服在线链路。任一校验错误会拒绝整个数据包，不产生部分索引。
+首版导入器使用本地文件和 `.local/ingest-state` 状态目录，不接入 OSS、PostgreSQL、真实身份、在线 Provider 或客服在线链路。任一校验错误会拒绝整个数据包，不产生部分索引。ACL YAML 只作为内部测试记录导入，不会授予真实权限。

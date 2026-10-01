@@ -64,6 +64,16 @@ documents:
     effective_from: 2026-09-29
     effective_to: 2026-10-01
     source_type: synthetic
+  - document_id: syn-acl-a
+    path: acl.yaml
+    format: yaml
+    doc_type: access_fixture
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-east
+    disclosure_class: internal_only
+    effective_from: 2026-01-01
+    effective_to: null
+    source_type: synthetic
   - document_id: syn-products-b
     path: products.csv
     format: csv
