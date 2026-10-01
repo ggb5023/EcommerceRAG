@@ -215,9 +215,21 @@ class LocalIndex:
     """Keyword/deterministic-vector compatible local index; no external model."""
     def __init__(self, chunks: Iterable[Chunk] = ()) -> None:
         self.chunks = list(chunks)
+        self._active_versions: dict[tuple[str, str], str] = {}
+        for chunk in self.chunks:
+            self._active_versions.setdefault((chunk.tenant_id, chunk.document_id), chunk.version_id)
 
     def add(self, chunks: Iterable[Chunk]) -> None:
-        self.chunks.extend(chunks)
+        additions = list(chunks)
+        self.chunks.extend(additions)
+        for chunk in additions:
+            self._active_versions.setdefault((chunk.tenant_id, chunk.document_id), chunk.version_id)
+
+    def activate(self, tenant_id: str, document_id: str, version_id: str) -> None:
+        if not any(chunk.tenant_id == tenant_id and chunk.document_id == document_id and chunk.version_id == version_id
+                   for chunk in self.chunks):
+            raise ValueError("cannot activate an unknown document version")
+        self._active_versions[(tenant_id, document_id)] = version_id
 
     @staticmethod
     def _tokens(value: str) -> set[str]:
@@ -236,6 +248,8 @@ class LocalIndex:
         results: list[tuple[float, Chunk]] = []
         for chunk in self.chunks:
             if chunk.tenant_id != tenant_id or (shop_id and chunk.shop_id != shop_id):
+                continue
+            if self._active_versions.get((chunk.tenant_id, chunk.document_id)) != chunk.version_id:
                 continue
             if not shop_id and chunk.shop_id not in allowed_shop_ids:
                 continue

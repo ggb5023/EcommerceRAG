@@ -134,6 +134,17 @@ class IngestValidationTests(unittest.TestCase):
         self.assertTrue(all(item["version_id"] == "version-new" for item in second_results))
         self.assertNotEqual(first_results[0]["chunk_id"], second_results[0]["chunk_id"])
 
+    def test_active_version_prevents_old_version_results(self):
+        old = load_manifest_index(self.manifest(), version_id="version-old")
+        new = load_manifest_index(self.manifest(), version_id="version-new")
+        old.add(new.chunks)
+        result = old.search("配送 退货", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})
+        self.assertTrue(result)
+        self.assertTrue(all(item["version_id"] == "version-old" for item in result))
+        old.activate("demo-tenant-a", "syn-policy-a", "version-new")
+        result = old.search("配送 退货", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})
+        self.assertTrue(all(item["version_id"] == "version-new" for item in result))
+
     def test_evidence_has_traceable_citation_fields(self):
         index = load_manifest_index(self.manifest())
         item = index.search("配送 退货", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})[0]
