@@ -7,6 +7,7 @@ data completely out of the first milestone.
 """
 from __future__ import annotations
 
+import os
 import re
 from hashlib import sha256
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Any
 
 import grpc
 
+from app.ingest.pipeline import load_manifest_index
 from rag.v1 import rag_pb2, rag_pb2_grpc
 
 
@@ -64,6 +66,9 @@ _SYNTHETIC_FIXTURES = (
     },
 )
 FIXTURES = (_SHIPPING, *_SYNTHETIC_FIXTURES)
+_LOCAL_INDEX = None
+if os.environ.get("SYNTHETIC_MANIFEST"):
+    _LOCAL_INDEX = load_manifest_index(Path(os.environ["SYNTHETIC_MANIFEST"]))
 
 
 def _is_vague(query: str) -> bool:
@@ -136,6 +141,24 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
         query = request.query.strip()
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
+        if _LOCAL_INDEX is not None:
+            matches = _LOCAL_INDEX.search(query, tenant_id=request.context.tenant_id,
+                                          shop_id=request.context.shop_id or None,
+                                          allowed_shop_ids=set(request.context.allowed_shop_ids),
+                                          role=request.context.role)
+            for index, item in enumerate(matches, 1):
+                yield rag_pb2.SearchResponse(
+                    phase="retrieval", complete=False,
+                    evidence=[rag_pb2.Evidence(
+                        id=item["chunk_id"], content=item["content"], source_type="local_synthetic",
+                        source_ref=item["source_ref"], document_id=item["document_id"],
+                        version_id=item["version_id"], rank=index, raw_score=item["score"],
+                        shop_id=item["shop_id"], disclosure_class=item["disclosure_class"],
+                        customer_eligible=item["disclosure_class"] == "external_allowed",
+                    )], request_id=request.context.request_id, is_mock=True)
+            yield rag_pb2.SearchResponse(phase="complete", complete=True,
+                                         request_id=request.context.request_id, is_mock=True)
+            return
         matches = [f for f in _fixture_matches(query) if _allowed(request.context, f)]
         for index, fixture in enumerate(matches, 1):
             yield rag_pb2.SearchResponse(

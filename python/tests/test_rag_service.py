@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from app.rag_service import FIXTURES, RagService, rag_pb2
 
@@ -118,6 +122,24 @@ class RagServiceTests(unittest.TestCase):
     def test_cancelled_generate_stops_without_output(self):
         request = rag_pb2.GenerateRequest(context=request_context(), query="x")
         self.assertEqual(list(RagService().Generate(request, Ctx(active=False))), [])
+
+    def test_synthetic_manifest_switch_uses_local_index(self):
+        root = Path(__file__).resolve().parents[2]
+        script = """
+from app.rag_service import RagService, rag_pb2
+class C:
+    def abort(self, code, details): raise RuntimeError(details)
+    def is_active(self): return True
+ctx = rag_pb2.RequestContext(request_id='synthetic', tenant_id='demo-tenant-a', user_id='u', shop_id='demo-shop-east', allowed_shop_ids=['demo-shop-east'], role='operator')
+items = list(RagService().Search(rag_pb2.SearchRequest(context=ctx, query='保温杯 容量'), C()))
+assert items[0].evidence[0].document_id == 'syn-products-a'
+assert items[0].evidence[0].source_type == 'local_synthetic'
+assert items[0].evidence[0].id.startswith('chunk-')
+"""
+        env = {**os.environ, "PYTHONPATH": str(root / "python"),
+               "SYNTHETIC_MANIFEST": str(root / "data/synthetic/ecommerce-demo-v1/manifest.yaml")}
+        completed = subprocess.run([sys.executable, "-c", script], cwd=root, env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 if __name__ == "__main__":
