@@ -58,6 +58,12 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertEqual(result[1]["status"], "FAIL")
         self.assertEqual(result[0]["hit_doc_count"], 1)
 
+    def test_run_metadata_is_deterministic_except_timestamp(self):
+        cases = [{"case_id": "r", "tags": ["product_knowledge"], "expected_doc_ids": ["doc-1"]}]
+        first = MODULE.case_results(cases, {"doc-1"})
+        second = MODULE.case_results(cases, {"doc-1"})
+        self.assertEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

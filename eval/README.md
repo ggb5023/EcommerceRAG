@@ -39,7 +39,9 @@ By default no synthetic document index is assumed, so retrieval hit rate and
 document coverage are explicitly `NOT_RUN`. Use `--fixture-doc-ids` only with
 an approved metadata-only JSON document ID fixture to calculate those metrics;
 document bodies are never accepted by this tool. Its output is not M2
-real-service acceptance.
+real-service acceptance. Reports include the input hash, pipeline version, a
+stable local run ID, and a fixture hash when supplied; the timestamp is run
+metadata and is not used as an evaluation value.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer

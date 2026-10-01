@@ -6,6 +6,7 @@ import argparse
 import collections
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -53,6 +54,10 @@ def load_fixture_doc_ids(path: Path | None) -> set[str] | None:
     if not isinstance(ids, list) or not all(isinstance(item, str) and item for item in ids):
         raise ValueError("fixture document_ids must be a list of non-empty strings")
     return set(ids)
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def case_results(cases: list[dict], fixture_doc_ids: set[str] | None = None) -> list[dict]:
@@ -132,6 +137,13 @@ def main() -> int:
         "eval_set_version": metadata.get("eval_set_version"),
         "case_count": len(cases),
         "input_sha256": metadata.get("sha256"),
+        "pipeline_version": metadata.get("pipeline_version"),
+        "run": {
+            "mode": "deterministic_mock",
+            "run_id": "local-deterministic-" + metadata.get("sha256", "unknown")[:12],
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "fixture_sha256": file_sha256(args.fixture_doc_ids) if args.fixture_doc_ids else None,
+        },
         "real_service_acceptance": False,
         "results": {
             "retrieval_cases": counts["retrieval"],
