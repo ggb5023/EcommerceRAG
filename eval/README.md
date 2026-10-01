@@ -35,7 +35,11 @@ validates the input SHA-256, and reports retrieval, evidence coverage, refusal,
 unauthorized, and multi-turn classification counts. `--include-cases` adds
 metadata-only per-case results (case ID, classification, tags, authorization
 scope, and expected evidence count); it never emits query or answer text.
-Its output is not M2 real-service acceptance.
+By default no synthetic document index is assumed, so retrieval hit rate and
+document coverage are explicitly `NOT_RUN`. Use `--fixture-doc-ids` only with
+an approved metadata-only JSON document ID fixture to calculate those metrics;
+document bodies are never accepted by this tool. Its output is not M2
+real-service acceptance.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer

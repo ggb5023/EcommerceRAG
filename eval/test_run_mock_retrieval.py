@@ -37,10 +37,26 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
             "authorization": {"scope": "tenant_shop"},
         }
         result = MODULE.case_results([case])[0]
-        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["status"], "NOT_RUN")
         self.assertEqual(result["authorization_scope"], "tenant_shop")
         self.assertNotIn("query", result)
         self.assertNotIn("private query text", str(result))
+
+    def test_missing_fixture_keeps_retrieval_not_run(self):
+        case = {"case_id": "r", "tags": ["product_knowledge"], "expected_doc_ids": ["doc-1"]}
+        result = MODULE.case_results([case])[0]
+        self.assertEqual(result["status"], "NOT_RUN")
+        self.assertEqual(result["hit_doc_count"], 0)
+
+    def test_fixture_computes_hit_and_coverage(self):
+        cases = [
+            {"case_id": "r1", "tags": ["product_knowledge"], "expected_doc_ids": ["doc-1", "doc-2"]},
+            {"case_id": "r2", "tags": ["product_knowledge"], "expected_doc_ids": ["doc-3"]},
+        ]
+        result = MODULE.case_results(cases, {"doc-1"})
+        self.assertEqual(result[0]["status"], "PASS")
+        self.assertEqual(result[1]["status"], "FAIL")
+        self.assertEqual(result[0]["hit_doc_count"], 1)
 
 
 if __name__ == "__main__":
