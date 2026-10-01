@@ -37,6 +37,20 @@ def evaluate_cases(cases: list[dict]) -> tuple[collections.Counter, collections.
     return counts, coverage, issues
 
 
+def input_drift_issues(cases: list[dict], metadata: dict) -> list[str]:
+    issues: list[str] = []
+    expected_version = metadata.get("eval_set_version")
+    expected_source = metadata.get("source_type")
+    for case in cases:
+        source = case.get("source", {})
+        case_id = case.get("case_id", "<missing>")
+        if source.get("source_version") != expected_version:
+            issues.append(f"source_version_drift:{case_id}")
+        if source.get("type") != expected_source:
+            issues.append(f"source_type_drift:{case_id}")
+    return issues
+
+
 def load_fixture_doc_ids(path: Path | None) -> set[str] | None:
     """Load an optional, metadata-only document ID fixture.
 
@@ -118,6 +132,7 @@ def main() -> int:
         if "authorized" in tags and "unauthorized" in tags:
             tag_conflicts.append(case.get("case_id", "<missing>"))
     issues.extend(f"conflicting_tags:{case_id}" for case_id in tag_conflicts)
+    issues.extend(input_drift_issues(cases, metadata))
     retrieval_total = counts["retrieval"]
     evidence_total = sum(bool(case.get("expected_doc_ids")) for case in cases)
     retrieval_cases = [case for case in cases if classify(case) == "retrieval"]
@@ -129,6 +144,16 @@ def main() -> int:
     expected_doc_total = sum(len(set(case.get("expected_doc_ids", []))) for case in retrieval_cases)
     hit_doc_total = (
         sum(len(set(case.get("expected_doc_ids", [])) & fixture_doc_ids) for case in retrieval_cases)
+        if fixture_doc_ids is not None
+        else None
+    )
+    missing_fixture_docs = (
+        sorted({
+            doc_id
+            for case in retrieval_cases
+            for doc_id in case.get("expected_doc_ids", [])
+            if doc_id not in fixture_doc_ids
+        })
         if fixture_doc_ids is not None
         else None
     )
@@ -150,8 +175,8 @@ def main() -> int:
             "refusal_cases": counts["refusal"],
             "unauthorized_cases": counts["unauthorized"],
             "clarification_cases": counts["clarification"],
-            "evidence_coverage_cases": evidence_total,
-            "evidence_coverage_rate": round(evidence_total / len(cases), 4) if cases else 0,
+            "expected_evidence_cases": evidence_total,
+            "expected_evidence_rate": round(evidence_total / len(cases), 4) if cases else 0,
             "retrieval_cases_with_expected_docs": sum(
                 bool(case.get("expected_doc_ids"))
                 for case in cases
@@ -172,6 +197,7 @@ def main() -> int:
             "path": str(args.fixture_doc_ids) if args.fixture_doc_ids else None,
             "status": "READY" if fixture_doc_ids is not None else "NOT_RUN",
             "document_id_count": len(fixture_doc_ids) if fixture_doc_ids is not None else None,
+            "missing_expected_document_ids": missing_fixture_docs,
         },
         "tag_coverage": dict(sorted(coverage.items())),
         "input_integrity": {

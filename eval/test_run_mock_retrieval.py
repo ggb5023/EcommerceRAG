@@ -64,6 +64,17 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         second = MODULE.case_results(cases, {"doc-1"})
         self.assertEqual(first, second)
 
+    def test_detects_input_source_version_drift(self):
+        cases = [{"case_id": "x", "source": {"source_version": "old", "type": "synthetic"}}]
+        issues = MODULE.input_drift_issues(cases, {"eval_set_version": "current", "source_type": "synthetic"})
+        self.assertEqual(issues, ["source_version_drift:x"])
+
+    def test_fixture_reports_missing_expected_documents(self):
+        cases = [{"case_id": "r", "tags": ["product_knowledge"], "expected_doc_ids": ["d1", "d2"]}]
+        result = MODULE.case_results(cases, {"d1"})[0]
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["hit_doc_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
