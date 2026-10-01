@@ -55,6 +55,7 @@ WITH resources(tenant_name,shop_id,logical_key,classification) AS (VALUES
  ('Synthetic ecommerce demo v1','demo-shop-east','syn-restricted-a','external_allowed'),
  ('Synthetic ecommerce demo v1','demo-shop-east','syn-faq-a','external_allowed'),
  ('Synthetic ecommerce demo v1','demo-shop-east','syn-facts-a','internal_only'),
+ ('Synthetic ecommerce demo v1','demo-shop-east','syn-public-facts-a','external_allowed'),
  ('Synthetic ecommerce demo v1','demo-shop-east','syn-acl-a','internal_only'),
  ('Synthetic ecommerce tenant b','demo-shop-central','syn-products-b','external_allowed'),
  ('Synthetic ecommerce tenant b','demo-shop-central','syn-policy-revoked','unclassified'))

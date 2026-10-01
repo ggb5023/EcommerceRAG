@@ -115,6 +115,7 @@ type gateway struct {
 	rag        ragv1.RagServiceClient
 	session    mockSession
 	signingKey []byte
+	profile    string
 	mu         sync.Mutex
 	cancels    map[string]context.CancelFunc
 }
@@ -163,6 +164,17 @@ func main() {
 		log.Fatal("mock gateway requires a non-superuser in an isolated m1_test database")
 	}
 	syntheticMode := os.Getenv("SYNTHETIC_MANIFEST") != ""
+	profile := os.Getenv("RAG_PROFILE")
+	if profile == "" {
+		if syntheticMode {
+			profile = "synthetic_import_mock"
+		} else {
+			profile = "m1_fixture_mock"
+		}
+	}
+	if (profile != "synthetic_import_mock" && profile != "m1_fixture_mock") || (profile == "synthetic_import_mock") != syntheticMode {
+		log.Fatal("RAG_PROFILE and manifest must select a consistent mock profile")
+	}
 	var identity IdentityAdapter
 	if syntheticMode {
 		identity = syntheticIdentityAdapter{
@@ -189,7 +201,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect RAG service: %v", err)
 	}
-	g := &gateway{db: db, rag: ragv1.NewRagServiceClient(conn), session: session, cancels: map[string]context.CancelFunc{}}
+	g := &gateway{profile: profile, db: db, rag: ragv1.NewRagServiceClient(conn), session: session, cancels: map[string]context.CancelFunc{}}
 	seedCtx, seedCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	if !syntheticMode {
 		fixture, imported, fixtureErr := g.importM1Fixture(seedCtx)
@@ -269,7 +281,7 @@ func (g *gateway) getSession(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenantId": g.session.tenant, "userId": g.session.user, "role": g.session.role,
-		"shopId": g.session.shop, "shopName": "M1 演示店铺", "displayName": "M1 演示客服",
+		"shopId": g.session.shop, "shopName": g.session.shop, "displayName": g.session.user, "profile": g.profile,
 		"allowedShopIds": g.session.allowedShops, "allShops": g.session.allShops,
 		"permission_revision": g.session.permissionRevision,
 		"is_mock":             true,
@@ -361,7 +373,7 @@ func (g *gateway) getConversation(w http.ResponseWriter, r *http.Request) {
 	if !g.authorizeConversationHistory(w, r, id) {
 		return
 	}
-	rows, err := g.db.Query(r.Context(), `SELECT m.role, COALESCE(m.content,''), t.request_id
+	rows, err := g.db.Query(r.Context(), `SELECT m.role, COALESCE(m.content,''), t.request_id,t.id,COALESCE((SELECT MAX(e.execution_no) FROM conversation_execution e WHERE e.tenant_id=t.tenant_id AND e.turn_id=t.id),1)
 		FROM turn t JOIN message m ON m.tenant_id=t.tenant_id AND m.turn_id=t.id
 		WHERE t.tenant_id=$1 AND t.conversation_id=$2 ORDER BY t.turn_no,m.created_at`, g.session.tenantID, id)
 	if err != nil {
@@ -372,91 +384,38 @@ func (g *gateway) getConversation(w http.ResponseWriter, r *http.Request) {
 	messages := make([]map[string]any, 0)
 	for rows.Next() {
 		var role, content, requestID string
-		if err := rows.Scan(&role, &content, &requestID); err != nil {
+		var turnID int64
+		var executionNo int
+		if err := rows.Scan(&role, &content, &requestID, &turnID, &executionNo); err != nil {
 			writeError(w, 503, "database_unavailable", "could not load messages")
 			return
 		}
-		messages = append(messages, map[string]any{"role": role, "content": content, "request_id": requestID, "mock": role == "assistant"})
+		messages = append(messages, map[string]any{"role": role, "content": content, "request_id": requestID, "turn_id": strconv.FormatInt(turnID, 10), "execution_no": executionNo, "mock": role == "assistant"})
 	}
-	var latestTurnID int64
-	var latestRequest, latestStatus string
-	var latestAnswer *string
-	var latestMock bool
-	err = g.db.QueryRow(r.Context(), `SELECT t.id,t.request_id,t.status,t.answer,e.is_mock
-		FROM turn t JOIN conversation_execution e ON e.tenant_id=t.tenant_id AND e.turn_id=t.id
-		WHERE t.tenant_id=$1 AND t.conversation_id=$2
-		ORDER BY t.turn_no DESC,e.execution_no DESC LIMIT 1`, g.session.tenantID, id).
-		Scan(&latestTurnID, &latestRequest, &latestStatus, &latestAnswer, &latestMock)
-	evidence := make([]map[string]any, 0)
-	citations := make([]map[string]any, 0)
-	var reply *string
-	var canCopy bool
-	blockedReason := ""
-	if latestRequest != "" {
-		erows, eerr := g.db.Query(r.Context(), `SELECT es.evidence_id,COALESCE(es.document_id,''),COALESCE(es.version_id,''),
-			COALESCE(es.source_ref,''),es.content,es.disclosure_class,es.customer_eligible,es.citation_index,COALESCE(es.shop_id,'')
-			FROM evidence_snapshot es JOIN conversation_execution e ON e.tenant_id=es.tenant_id AND e.id=es.execution_id
-			WHERE e.tenant_id=$1 AND e.request_id=$2 ORDER BY es.citation_index`, g.session.tenantID, latestRequest)
-		if eerr == nil {
-			for erows.Next() {
-				var evidenceID, documentID, versionID, sourceRef, content, disclosure, shopID string
-				var eligible bool
-				var citationIndex *int
-				if erows.Scan(&evidenceID, &documentID, &versionID, &sourceRef, &content, &disclosure, &eligible, &citationIndex, &shopID) == nil {
-					allowed, authErr := g.evidenceAllowed(r.Context(), &ragv1.Evidence{Id: evidenceID, DocumentId: documentID, ShopId: shopID})
-					if authErr != nil {
-						writeError(w, http.StatusServiceUnavailable, authorizationFailureCode(authErr), "authorization unavailable")
-						return
-					}
-					if !allowed {
-						continue
-					}
-					evidence = append(evidence, map[string]any{"id": evidenceID, "title": documentID, "snippet": content,
-						"sourceType": disclosure, "documentId": documentID, "versionId": versionID, "sourceRef": sourceRef,
-						"score": 1.0, "citationIndex": citationIndex, "customerEligible": eligible, "shopId": shopID})
-				}
-			}
-			erows.Close()
-		}
-		crows, cerr := g.db.Query(r.Context(), `SELECT c.evidence_id,c.citation_index,COALESCE(es.shop_id,''),COALESCE(es.document_id,'')
-			FROM citation c JOIN conversation_execution e ON e.tenant_id=c.tenant_id AND e.id=c.execution_id
-			JOIN evidence_snapshot es ON es.tenant_id=c.tenant_id AND es.execution_id=c.execution_id AND es.evidence_id=c.evidence_id
-			WHERE c.tenant_id=$1 AND e.request_id=$2 ORDER BY c.citation_index`, g.session.tenantID, latestRequest)
-		if cerr == nil {
-			for crows.Next() {
-				var evidenceID, shopID, documentID string
-				var citationIndex int
-				if crows.Scan(&evidenceID, &citationIndex, &shopID, &documentID) == nil {
-					allowed, authErr := g.evidenceAllowed(r.Context(), &ragv1.Evidence{Id: evidenceID, DocumentId: documentID, ShopId: shopID})
-					if authErr != nil {
-						writeError(w, http.StatusServiceUnavailable, authorizationFailureCode(authErr), "authorization unavailable")
-						return
-					}
-					if !allowed {
-						continue
-					}
-					citations = append(citations, map[string]any{"evidence_id": evidenceID, "citation_index": citationIndex})
-				}
-			}
-			crows.Close()
-		}
-		_ = g.db.QueryRow(r.Context(), `SELECT text_plain,can_copy,COALESCE(blocked_reason,'')
-			FROM customer_reply cr JOIN conversation_execution e ON e.tenant_id=cr.tenant_id AND e.id=cr.execution_id
-			WHERE e.tenant_id=$1 AND e.request_id=$2`, g.session.tenantID, latestRequest).
-			Scan(&reply, &canCopy, &blockedReason)
-		if latestMock {
-			canCopy = false
-			blockedReason = "mock"
-		}
+	if err = rows.Err(); err != nil {
+		writeError(w, 503, "database_unavailable", "could not load messages")
+		return
 	}
-	result := map[string]any{"id": r.PathValue("id"), "title": title, "messages": messages,
-		"evidence": evidence, "citations": citations}
+	rows.Close()
+	var latestRequest string
+	err = g.db.QueryRow(r.Context(), `SELECT e.request_id FROM turn t JOIN conversation_execution e ON e.tenant_id=t.tenant_id AND e.turn_id=t.id
+		WHERE t.tenant_id=$1 AND t.conversation_id=$2 ORDER BY t.turn_no DESC,e.execution_no DESC LIMIT 1`, g.session.tenantID, id).Scan(&latestRequest)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 503, "database_unavailable", "could not load execution")
+		return
+	}
+	result := map[string]any{"id": r.PathValue("id"), "title": title, "messages": messages}
 	if latestRequest != "" {
-		result["last_turn"] = map[string]any{"turn_id": strconv.FormatInt(latestTurnID, 10), "request_id": latestRequest, "status": latestStatus,
-			"answer": latestAnswer, "is_mock": latestMock, "evidence": evidence, "citations": citations,
-			"customer_reply": map[string]any{"text_plain": reply, "can_copy": canCopy, "blocked_reason": blockedReason}}
-		result["lastReply"] = latestAnswer
-		result["lastReplyCopyable"] = canCopy
+		last, loadErr := g.executionResult(r.Context(), latestRequest)
+		if loadErr != nil {
+			writeError(w, 503, "database_unavailable", "could not load execution")
+			return
+		}
+		result["last_turn"] = last
+		result["evidence"] = last["evidence"]
+		result["citations"] = last["citations"]
+		result["lastReply"] = last["answer"]
+		result["lastReplyCopyable"] = false
 	}
 	if err := g.refreshAuthorization(r.Context()); err != nil {
 		writeError(w, authorizationHTTPStatus(err), authorizationFailureCode(err), "authorization failed")
@@ -496,7 +455,8 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "idempotency_key_required", "Idempotency-Key is required")
 		return
 	}
-	hash := sha256.Sum256([]byte(query))
+	canonicalPayload, _ := json.Marshal(map[string]string{"query": query, "parent_turn_id": strings.TrimSpace(in.ParentTurnID)})
+	hash := sha256.Sum256(canonicalPayload)
 	payloadHash := hex.EncodeToString(hash[:])
 	tx, err := g.db.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
@@ -552,17 +512,20 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 		}
 		parentTurnID = &parentID
 	}
-	var oldHash, oldRequest string
-	err = tx.QueryRow(r.Context(), `SELECT i.payload_hash,t.request_id FROM turn_idempotency i
+	var oldHash, oldRequest, oldStatus string
+	var oldTurnID int64
+	var oldExecutionNo int
+	err = tx.QueryRow(r.Context(), `SELECT i.payload_hash,e.request_id,e.status,t.id,e.execution_no FROM turn_idempotency i
 		JOIN turn t ON t.tenant_id=i.tenant_id AND t.id=i.turn_id
+		JOIN conversation_execution e ON e.tenant_id=t.tenant_id AND e.turn_id=t.id
 		WHERE i.tenant_id=$1 AND i.conversation_id=$2 AND i.idempotency_key=$3`,
-		g.session.tenantID, conversationID, key).Scan(&oldHash, &oldRequest)
+		g.session.tenantID, conversationID, key).Scan(&oldHash, &oldRequest, &oldStatus, &oldTurnID, &oldExecutionNo)
 	if err == nil {
 		if oldHash != payloadHash {
 			writeError(w, 409, "idempotency_conflict", "idempotency key was used with a different query")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"id": oldRequest, "request_id": oldRequest, "status": "EXISTING",
+		writeJSON(w, 200, map[string]any{"id": oldRequest, "request_id": oldRequest, "status": oldStatus, "turn_id": strconv.FormatInt(oldTurnID, 10), "execution_no": oldExecutionNo, "conversation_id": strconv.FormatInt(conversationID, 10),
 			"events_url": "/v1/turns/" + oldRequest + "/events", "is_mock": true})
 		return
 	}
@@ -612,7 +575,7 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "database_unavailable", "could not commit turn")
 		return
 	}
-	_, _ = g.db.Exec(r.Context(), `UPDATE conversation SET title=COALESCE(NULLIF(title,''),$3)
+	_, _ = g.db.Exec(r.Context(), `UPDATE conversation SET title=CASE WHEN title IS NULL OR title IN ('','新会话') THEN $3 ELSE title END
 		WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, conversationID, first24(query))
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	g.mu.Lock()
@@ -620,6 +583,7 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	go g.runTurn(ctx, requestID, conversationID, turnID, executionID, query)
 	writeJSON(w, 202, map[string]any{"id": requestID, "request_id": requestID, "status": "EXECUTING",
+		"turn_id": strconv.FormatInt(turnID, 10), "execution_no": 1, "conversation_id": strconv.FormatInt(conversationID, 10),
 		"is_mock": true, "events_url": "/v1/turns/" + requestID + "/events"})
 }
 
@@ -656,6 +620,10 @@ func (g *gateway) runTurn(ctx context.Context, requestID string, conversationID,
 		eventSequence++
 		if object, ok := payload.(map[string]any); ok {
 			object["seq"] = eventSequence
+			object["request_id"] = requestID
+			object["turn_id"] = strconv.FormatInt(turnID, 10)
+			object["conversation_id"] = strconv.FormatInt(conversationID, 10)
+			object["execution_no"] = 1
 		}
 		body, err := json.Marshal(payload)
 		if err != nil {
@@ -667,30 +635,75 @@ func (g *gateway) runTurn(ctx context.Context, requestID string, conversationID,
 		return err
 	}
 	finish := func(state, code, answer string) {
-		finishCtx := context.Background()
-		if state != "DONE" {
-			_ = writeEvent("error", map[string]any{"type": "error", "message": code, "code": code})
+		finishCtx, finishCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer finishCancel()
+		tx, err := g.db.Begin(finishCtx)
+		if err != nil {
+			log.Printf("finish transaction unavailable")
+			return
 		}
-		_ = writeEvent("completed", map[string]any{"type": "completed", "status": state, "error_code": code, "is_mock": true, "can_copy": false})
+		defer tx.Rollback(finishCtx)
+		var current string
+		err = tx.QueryRow(finishCtx, `SELECT status FROM conversation_execution WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, g.session.tenantID, executionID).Scan(&current)
+		if err != nil || terminal(current) {
+			return
+		}
+		if current == "CANCEL_REQUESTED" || errors.Is(ctx.Err(), context.Canceled) {
+			state = "CANCELLED"
+			code = "cancelled"
+			answer = ""
+		}
+		if state == "DONE" && ctx.Err() != nil {
+			state, code = grpcFailure(ctx, ctx.Err())
+			answer = ""
+		}
 		answerSum := sha256.Sum256([]byte(answer))
-		_, err := g.db.Exec(finishCtx, `UPDATE conversation_execution SET status=$3,finish_reason=$3,error_code=NULLIF($4,''),
-			answer=$5,answer_hash=$6,finished_at=now()
-			WHERE tenant_id=$1 AND id=$2 AND status IN ('EXECUTING','CANCEL_REQUESTED')`, g.session.tenantID, executionID, state, code, answer, hex.EncodeToString(answerSum[:]))
-		if err != nil {
-			log.Printf("finish execution %s: %v", requestID, err)
+		_, err = tx.Exec(finishCtx, `UPDATE conversation_execution SET status=$3,finish_reason=$3,error_code=NULLIF($4,''),answer=$5,answer_hash=$6,finished_at=now()
+			WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, executionID, state, code, answer, hex.EncodeToString(answerSum[:]))
+		if err == nil {
+			_, err = tx.Exec(finishCtx, `UPDATE turn SET status=$3,answer=$4 WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, turnID, state, answer)
 		}
-		_, err = g.db.Exec(finishCtx, `UPDATE turn SET status=$3,answer=$4 WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, turnID, state, answer)
-		if err != nil {
-			log.Printf("finish turn %s: %v", requestID, err)
-		}
-		if state == "DONE" {
-			_, err = g.db.Exec(finishCtx, `INSERT INTO message(tenant_id,turn_id,role,content) VALUES($1,$2,'assistant',$3)`, g.session.tenantID, turnID, answer)
-			if err != nil {
-				log.Printf("store assistant message %s: %v", requestID, err)
+		if state == "DONE" && err == nil {
+			_, err = tx.Exec(finishCtx, `INSERT INTO message(tenant_id,turn_id,role,content) VALUES($1,$2,'assistant',$3)`, g.session.tenantID, turnID, answer)
+			if err == nil {
+				_, err = tx.Exec(finishCtx, `INSERT INTO customer_reply(tenant_id,execution_id,text_plain,is_mock,can_copy,blocked_reason)
+				VALUES($1,$2,$3,true,false,'mock') ON CONFLICT(tenant_id,execution_id) DO UPDATE SET text_plain=EXCLUDED.text_plain,is_mock=true,can_copy=false,blocked_reason='mock'`, g.session.tenantID, executionID, answer)
 			}
+		}
+		appendEvent := func(kind string, object map[string]any) {
+			if err != nil {
+				return
+			}
+			eventSequence++
+			object["seq"] = eventSequence
+			object["request_id"] = requestID
+			object["turn_id"] = strconv.FormatInt(turnID, 10)
+			object["conversation_id"] = strconv.FormatInt(conversationID, 10)
+			object["execution_no"] = 1
+			body, marshalErr := json.Marshal(object)
+			if marshalErr != nil {
+				err = marshalErr
+				return
+			}
+			_, err = tx.Exec(finishCtx, `INSERT INTO sse_event(tenant_id,execution_id,sequence,event_type,data_json) VALUES($1,$2,$3,$4,$5::jsonb)`, g.session.tenantID, executionID, eventSequence, kind, string(body))
+		}
+		if state != "DONE" && state != "ASKING" {
+			appendEvent("error", map[string]any{"type": "error", "code": code, "message": code})
+		}
+		appendEvent("completed", map[string]any{"type": "completed", "status": state, "clarification": answer, "error_code": code, "is_mock": true, "can_copy": false})
+		if err == nil {
+			err = tx.Commit(finishCtx)
+		}
+		if err != nil {
+			log.Printf("finish execution transaction failed")
 		}
 	}
 	ensureAuthorized := func() bool {
+		if ctx.Err() != nil {
+			state, code := grpcFailure(ctx, ctx.Err())
+			finish(state, code, "")
+			return false
+		}
 		if err := g.refreshAuthorization(ctx); err != nil {
 			finish("FAILED", authorizationFailureCode(err), "")
 			return false
@@ -722,12 +735,7 @@ func (g *gateway) runTurn(ctx context.Context, requestID string, conversationID,
 		if clarification == "" {
 			clarification = "请补充更多问题细节。"
 		}
-		_ = writeEvent("status", map[string]any{"type": "status", "status": "ASKING", "clarification": clarification, "is_mock": true})
-		_, _ = g.db.Exec(context.Background(), `UPDATE conversation_execution SET status='ASKING',finish_reason='clarification',finished_at=now()
-			WHERE tenant_id=$1 AND id=$2 AND status='EXECUTING'`, g.session.tenantID, executionID)
-		_, _ = g.db.Exec(context.Background(), `UPDATE turn SET status='ASKING',intent=$3,information_source=$4
-			WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, turnID, routed.Intent, routed.InformationSource)
-		_ = writeEvent("completed", map[string]any{"type": "completed", "status": "ASKING", "clarification": clarification, "is_mock": true, "can_copy": false})
+		finish("ASKING", "", clarification)
 		return
 	}
 	if !ensureAuthorized() {
@@ -867,9 +875,7 @@ func (g *gateway) runTurn(ctx context.Context, requestID string, conversationID,
 			if !ensureAuthorized() {
 				return
 			}
-			_, _ = g.db.Exec(ctx, `INSERT INTO customer_reply(tenant_id,execution_id,text_plain,is_mock,can_copy,blocked_reason)
-				VALUES($1,$2,$3,true,false,'mock') ON CONFLICT(tenant_id,execution_id) DO UPDATE SET text_plain=EXCLUDED.text_plain,is_mock=true,can_copy=false,blocked_reason='mock'`,
-				g.session.tenantID, executionID, text)
+
 			finish("DONE", "", text)
 			return
 		}
@@ -911,70 +917,20 @@ func (g *gateway) getTurn(w http.ResponseWriter, r *http.Request) {
 	if !g.authorizeExecution(w, r, r.PathValue("id")) {
 		return
 	}
-	var requestID, state string
-	var answer *string
-	var mock bool
-	err := g.db.QueryRow(r.Context(), `SELECT t.request_id,t.status,t.answer,e.is_mock
-		FROM turn t JOIN conversation c ON c.tenant_id=t.tenant_id AND c.id=t.conversation_id
-		JOIN conversation_execution e ON e.tenant_id=t.tenant_id AND e.turn_id=t.id
-		WHERE t.tenant_id=$1 AND c.user_id=$2 AND c.shop_id=$3 AND t.request_id=$4`,
-		g.session.tenantID, g.session.userID, g.session.shop, r.PathValue("id")).Scan(&requestID, &state, &answer, &mock)
+	result, err := g.executionResult(r.Context(), r.PathValue("id"))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "turn not found")
 		return
 	}
 	if err != nil {
-		writeError(w, 503, "database_unavailable", "could not load turn")
+		writeError(w, 503, "database_unavailable", "could not load execution")
 		return
 	}
-	var items []map[string]any
-	rows, err := g.db.Query(r.Context(), `SELECT es.evidence_id,COALESCE(es.document_id,''),COALESCE(es.version_id,''),COALESCE(es.source_ref,''),es.content,es.disclosure_class,es.customer_eligible,es.citation_index,COALESCE(es.shop_id,'')
-		FROM evidence_snapshot es JOIN conversation_execution e ON e.tenant_id=es.tenant_id AND e.id=es.execution_id
-		JOIN turn t ON t.tenant_id=e.tenant_id AND t.id=e.turn_id
-		JOIN conversation c ON c.tenant_id=t.tenant_id AND c.id=t.conversation_id
-		WHERE e.tenant_id=$1 AND e.request_id=$2 AND c.user_id=$3 AND c.shop_id=$4 ORDER BY citation_index`,
-		g.session.tenantID, requestID, g.session.userID, g.session.shop)
-	if err != nil {
-		writeError(w, 503, "database_unavailable", "could not load evidence")
-		return
-	}
-	defer rows.Close()
-	items = make([]map[string]any, 0)
-	for rows.Next() {
-		var id, documentID, versionID, sourceRef, content, disclosure, shopID string
-		var eligible bool
-		var index *int
-		if err := rows.Scan(&id, &documentID, &versionID, &sourceRef, &content, &disclosure, &eligible, &index, &shopID); err != nil {
-			writeError(w, 503, "database_unavailable", "could not load evidence")
-			return
-		}
-		allowed, authErr := g.evidenceAllowed(r.Context(), &ragv1.Evidence{Id: id, DocumentId: documentID, ShopId: shopID})
-		if authErr != nil {
-			writeError(w, http.StatusServiceUnavailable, authorizationFailureCode(authErr), "authorization unavailable")
-			return
-		}
-		if !allowed {
-			continue
-		}
-		items = append(items, map[string]any{"id": id, "title": documentID, "snippet": content, "sourceType": disclosure,
-			"documentId": documentID, "versionId": versionID, "sourceRef": sourceRef, "score": 1.0, "citationIndex": index, "customerEligible": eligible, "shopId": shopID})
-	}
-	var reply *string
-	var canCopy bool
-	var blocked string
-	_ = g.db.QueryRow(r.Context(), `SELECT text_plain,can_copy,blocked_reason FROM customer_reply cr
-		JOIN conversation_execution e ON e.tenant_id=cr.tenant_id AND e.id=cr.execution_id
-		WHERE e.tenant_id=$1 AND e.request_id=$2`, g.session.tenantID, requestID).Scan(&reply, &canCopy, &blocked)
-	if mock {
-		canCopy = false
-		blocked = "mock"
-	}
-	if err := g.refreshAuthorization(r.Context()); err != nil {
+	if err = g.refreshAuthorization(r.Context()); err != nil {
 		writeError(w, authorizationHTTPStatus(err), authorizationFailureCode(err), "authorization failed")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"request_id": requestID, "status": state, "answer": answer, "is_mock": mock,
-		"customer_reply": map[string]any{"text_plain": reply, "can_copy": canCopy, "blocked_reason": blocked}, "evidence": items})
+	writeJSON(w, 200, result)
 }
 
 func (g *gateway) events(w http.ResponseWriter, r *http.Request) {
@@ -1010,7 +966,7 @@ func (g *gateway) events(w http.ResponseWriter, r *http.Request) {
 	for {
 		if err := g.refreshAuthorization(r.Context()); err != nil {
 			if flusher != nil {
-				payload, _ := json.Marshal(map[string]any{"type": "error", "code": authorizationFailureCode(err), "message": "authorization failed"})
+				payload, _ := json.Marshal(map[string]any{"type": "error", "code": authorizationFailureCode(err), "message": "authorization failed", "request_id": requestID, "http_status": authorizationHTTPStatus(err)})
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", payload)
 				flusher.Flush()
 			}
@@ -1031,7 +987,7 @@ func (g *gateway) events(w http.ResponseWriter, r *http.Request) {
 			}
 			if authErr := g.refreshAuthorization(r.Context()); authErr != nil {
 				rows.Close()
-				payload, _ := json.Marshal(map[string]string{"type": "error", "code": authorizationFailureCode(authErr), "message": "authorization failed"})
+				payload, _ := json.Marshal(map[string]any{"type": "error", "code": authorizationFailureCode(authErr), "message": "authorization failed", "request_id": requestID, "http_status": authorizationHTTPStatus(authErr)})
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", payload)
 				if flusher != nil {
 					flusher.Flush()
@@ -1074,33 +1030,37 @@ func (g *gateway) cancelTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestID := r.PathValue("id")
-	tag, err := g.db.Exec(r.Context(), `UPDATE conversation_execution e SET cancel_requested=true,status='CANCEL_REQUESTED'
-		FROM turn t,conversation c WHERE e.tenant_id=$1 AND e.request_id=$2 AND e.status='EXECUTING'
-		AND t.tenant_id=e.tenant_id AND t.id=e.turn_id AND c.tenant_id=t.tenant_id AND c.id=t.conversation_id
-		AND c.user_id=$3 AND c.shop_id=$4`, g.session.tenantID, requestID, g.session.userID, g.session.shop)
+	if !g.authorizeExecution(w, r, requestID) {
+		return
+	}
+	tx, err := g.db.Begin(r.Context())
 	if err != nil {
 		writeError(w, 503, "database_unavailable", "could not cancel turn")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		var state string
-		err = g.db.QueryRow(r.Context(), `SELECT e.status FROM conversation_execution e
-			JOIN turn t ON t.tenant_id=e.tenant_id AND t.id=e.turn_id JOIN conversation c ON c.tenant_id=t.tenant_id AND c.id=t.conversation_id
-			WHERE e.tenant_id=$1 AND e.request_id=$2 AND c.user_id=$3 AND c.shop_id=$4`,
-			g.session.tenantID, requestID, g.session.userID, g.session.shop).Scan(&state)
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, 404, "not_found", "turn not found")
-			return
-		}
-		if err != nil {
-			writeError(w, 503, "database_unavailable", "could not read turn status")
-			return
-		}
-		if state == "CANCEL_REQUESTED" {
-			writeJSON(w, 200, map[string]any{"request_id": requestID, "status": state})
-			return
-		}
-		writeJSON(w, 409, map[string]any{"request_id": requestID, "status": state})
+	defer tx.Rollback(r.Context())
+	var state string
+	var executionID, turnID int64
+	err = tx.QueryRow(r.Context(), `SELECT e.status,e.id,e.turn_id FROM conversation_execution e
+		JOIN turn t ON t.tenant_id=e.tenant_id AND t.id=e.turn_id JOIN conversation c ON c.tenant_id=t.tenant_id AND c.id=t.conversation_id
+		WHERE e.tenant_id=$1 AND e.request_id=$2 AND c.user_id=$3 AND c.shop_id=$4 FOR UPDATE OF e`, g.session.tenantID, requestID, g.session.userID, g.session.shop).Scan(&state, &executionID, &turnID)
+	if err != nil {
+		writeError(w, 503, "database_unavailable", "could not cancel turn")
+		return
+	}
+	if terminal(state) {
+		writeJSON(w, 200, map[string]any{"request_id": requestID, "status": state})
+		return
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE conversation_execution SET cancel_requested=true,status='CANCEL_REQUESTED' WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, executionID)
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE turn SET status='CANCEL_REQUESTED' WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, turnID)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
+	if err != nil {
+		writeError(w, 503, "database_unavailable", "could not persist cancellation")
 		return
 	}
 	g.mu.Lock()
@@ -1138,7 +1098,7 @@ func toEvidence(items []*ragv1.Evidence) []map[string]any {
 	for _, item := range items {
 		out = append(out, map[string]any{"id": item.Id, "title": item.DocumentId, "snippet": item.Content,
 			"sourceType": item.SourceType, "documentId": item.DocumentId, "versionId": item.VersionId,
-			"sourceRef": item.SourceRef, "score": item.RawScore, "customerEligible": item.CustomerEligible})
+			"sourceRef": item.SourceRef, "score": item.RawScore, "customerEligible": item.CustomerEligible, "citationIndex": item.Rank, "shopId": item.ShopId})
 	}
 	return out
 }

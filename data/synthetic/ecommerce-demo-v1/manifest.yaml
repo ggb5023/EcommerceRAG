@@ -123,3 +123,14 @@ documents:
     effective_to: 2026-06-01
     source_type: synthetic
     sha256: 14d8ee3a644ae7d3a03b6554d948e24bbb74095fb97caf32d8043a76a42e9cfc
+  - document_id: syn-public-facts-a
+    path: public-facts.csv
+    format: csv
+    doc_type: fact_snapshot
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-east
+    disclosure_class: external_allowed
+    effective_from: 2026-10-02
+    effective_to: 2026-10-03
+    source_type: synthetic
+    sha256: 45959a007fe6e9b728e552f9dfe8da5fb1b113e1a967c7ab80d07a6ee21ef35a

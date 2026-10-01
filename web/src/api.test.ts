@@ -24,7 +24,7 @@ function streamUntilTerminal() {
   let reject!: (error: Error) => void
   const done = new Promise<void>((yes, no) => { resolve = yes; reject = no })
   const cancel = api.streamEvents('turn-test', (event) => events.push(event), resolve,
-    (reason) => reject(new Error(reason)))
+    (reason) => reject(reason))
   return { events, done, cancel }
 }
 
@@ -96,9 +96,33 @@ describe('SSE transport', () => {
     let resolve!: (reason: string) => void
     const failed = new Promise<string>((done) => { resolve = done })
     const cancel = api.streamEvents('turn-test', () => { throw new Error('unexpected event') },
-      () => { throw new Error('unexpected completion') }, resolve)
+      () => { throw new Error('unexpected completion') }, (reason) => resolve(`${reason.status}: ${reason.message}`))
     expect(await failed).toContain('403')
     cancel()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats an unsequenced authorization frame as a failure', async () => {
+    const fetchMock = vi.fn(async () => sseResponse([
+      'event: error\ndata: {"type":"error","request_id":"turn-test","http_status":403,"code":"permission_changed"}\n\n',
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const run = streamUntilTerminal()
+    await expect(run.done).rejects.toMatchObject({ status: 403, code: 'permission_changed' })
+    run.cancel()
+    expect(run.events).toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a frame belonging to another execution', async () => {
+    const fetchMock = vi.fn(async () => sseResponse([
+      frame(1, { type: 'delta', seq: 1, text: 'other execution', request_id: 'old-request' }),
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const run = streamUntilTerminal()
+    await expect(run.done).rejects.toThrow('事件请求标识不匹配')
+    run.cancel()
+    expect(run.events).toEqual([])
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

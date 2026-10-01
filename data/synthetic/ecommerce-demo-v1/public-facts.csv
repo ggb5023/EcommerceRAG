@@ -1,0 +1,3 @@
+snapshot_date,sku,fact_type,value,notice
+2026-10-02,SKU-CUP-480,stock,42,合成公开库存快照；仅代表2026-10-02演示日期；非实时库存，不保证可下单
+2026-10-02,SKU-CUP-480,price,89.00 CNY,合成公开价格快照；非真实报价

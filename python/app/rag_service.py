@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import re
+import time
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -68,6 +70,14 @@ _SYNTHETIC_FIXTURES = (
 )
 FIXTURES = (_SHIPPING, *_SYNTHETIC_FIXTURES)
 _LOCAL_INDEX = None
+_PROFILE = os.environ.get("RAG_PROFILE") or ("synthetic_import_mock" if os.environ.get("SYNTHETIC_MANIFEST") else "m1_fixture_mock")
+if _PROFILE not in {"m1_fixture_mock", "synthetic_import_mock"} or (_PROFILE == "synthetic_import_mock") != bool(os.environ.get("SYNTHETIC_MANIFEST")):
+    raise ValueError("RAG_PROFILE and manifest must select a consistent mock profile")
+_BUSINESS_DATE = os.environ.get("SYNTHETIC_BUSINESS_DATE") or datetime.now(UTC).date().isoformat()
+date.fromisoformat(_BUSINESS_DATE)
+_PACING_MS = int(os.environ.get("MOCK_STREAM_PACING_MS", "0"))
+if not 0 <= _PACING_MS <= 100:
+    raise ValueError("MOCK_STREAM_PACING_MS must be between 0 and 100")
 if os.environ.get("SYNTHETIC_MANIFEST"):
     _LOCAL_INDEX = load_manifest_index(Path(os.environ["SYNTHETIC_MANIFEST"]))
 
@@ -139,6 +149,8 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
                        and c.source_ref == item.source_ref
                        and c.disclosure_class == item.disclosure_class
                        and _LOCAL_INDEX._active_versions.get((c.tenant_id, c.document_id)) == c.version_id
+                       and (not c.effective_from or _BUSINESS_DATE >= c.effective_from)
+                       and (not c.effective_to or _BUSINESS_DATE < c.effective_to)
                        for c in _LOCAL_INDEX.chunks)
         return any(f["tenant_id"] == item.tenant_id and f["shop_id"] == item.shop_id
                    and f["document_id"] == item.document_id and f["version_id"] == item.version_id
@@ -152,7 +164,7 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
         if _is_vague(query) or len(query) <= 2:
-            if request.history_summary.strip():
+            if re.search(r"SKU-[A-Z0-9-]+|保温杯|毛巾|收纳箱|马克杯|配送|退货", request.history_summary, re.IGNORECASE):
                 return rag_pb2.UnderstandResponse(
                     rewritten_query=request.history_summary.strip() + "\n补充问题：" + query,
                     intent="knowledge", information_source="knowledge", confidence=0.7,
@@ -181,12 +193,15 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
         if _LOCAL_INDEX is not None:
+            fact_query = any(word in query.lower() for word in ("价格", "库存", "订单", "price", "stock", "order"))
+            documents = {c.document_id for c in _LOCAL_INDEX.chunks
+                         if bool(c.metadata.get("fact_type")) == fact_query}
             matches = _LOCAL_INDEX.search(query, tenant_id=request.context.tenant_id,
                                           shop_id=request.context.shop_id or None,
                                           allowed_shop_ids=set(request.context.allowed_shop_ids),
                                           role=request.context.role,
-                                          allowed_document_ids=set(request.context.allowed_document_ids),
-                                          adjacent_window=1)
+                                          allowed_document_ids=set(request.context.allowed_document_ids) & documents,
+                                          adjacent_window=1, business_date=_BUSINESS_DATE)
             for index, item in enumerate(matches, 1):
                 self._authorize(request.context, context)
                 yield rag_pb2.SearchResponse(
@@ -242,19 +257,26 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
             text = "暂时没有可引用的知识资料，请补充问题或联系人工客服。"
         else:
             text = "根据当前知识资料：" + "；".join(e.content for e in evidence)
-        self._authorize(request.context, context)
-        yield rag_pb2.GenerateResponse(sequence=1, delta=text)
-        for index, item in enumerate(evidence, 2):
+        chunks = [text] if _PROFILE == "m1_fixture_mock" else [text[i:i + 32] for i in range(0, len(text), 32)]
+        sequence = 0
+        for chunk in chunks:
+            if hasattr(context, "is_active") and not context.is_active():
+                return
+            if _PACING_MS and _PROFILE == "synthetic_import_mock":
+                time.sleep(_PACING_MS / 1000)
             self._authorize(request.context, context)
-            yield rag_pb2.GenerateResponse(sequence=index, citation=item)
-        self._authorize(request.context, context)
-        yield rag_pb2.GenerateResponse(sequence=len(evidence) + 2, usage_json='{"is_mock":true}')
-        self._authorize(request.context, context)
-        yield rag_pb2.GenerateResponse(sequence=len(evidence) + 3, is_mock=True)
-        self._authorize(request.context, context)
-        yield rag_pb2.GenerateResponse(sequence=len(evidence) + 4, can_copy=False)
-        self._authorize(request.context, context)
-        yield rag_pb2.GenerateResponse(sequence=len(evidence) + 5, done=True)
+            if hasattr(context, "is_active") and not context.is_active():
+                return
+            sequence += 1
+            yield rag_pb2.GenerateResponse(sequence=sequence, delta=chunk)
+        for item in evidence:
+            self._authorize(request.context, context)
+            sequence += 1
+            yield rag_pb2.GenerateResponse(sequence=sequence, citation=item)
+        for event in ({"usage_json": '{"is_mock":true}'}, {"is_mock": True}, {"can_copy": False}, {"done": True}):
+            self._authorize(request.context, context)
+            sequence += 1
+            yield rag_pb2.GenerateResponse(sequence=sequence, **event)
 
 
 def register(server: Any) -> None:

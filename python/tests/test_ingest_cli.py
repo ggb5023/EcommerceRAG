@@ -29,7 +29,7 @@ class IngestValidationTests(unittest.TestCase):
     def test_clean_manifest_passes(self):
         result = validate_manifest(self.manifest())
         self.assertTrue(result.ok, result.errors)
-        self.assertEqual(len(result.files), 9)
+        self.assertEqual(len(result.files), 10)
         self.assertTrue(result.manifest_sha256)
         self.assertTrue(result.dataset_sha256)
 

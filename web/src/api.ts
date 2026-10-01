@@ -5,9 +5,11 @@ export interface Session {
   shopId: string
   shopName: string
   displayName: string
+  profile: string
+  is_mock: boolean
 }
 
-export interface Message { role: 'user' | 'assistant'; content: string; mock?: boolean }
+export interface Message { role: 'user' | 'assistant'; content: string; mock?: boolean; request_id?: string; turn_id?: string; execution_no?: number }
 export interface Evidence {
   id: string
   title: string
@@ -26,7 +28,12 @@ export interface CustomerReply {
   blocked_reason?: string
 }
 export interface LastTurn {
+  conversation_id: string
   turn_id: string
+  execution_no: number
+  parent_turn_id?: string | null
+  clarification?: string
+  events_url?: string
   request_id: string
   status: string
   answer?: string | null
@@ -46,9 +53,11 @@ export interface Conversation {
   citations?: Array<{ evidence_id: string; citation_index: number }>
   last_turn?: LastTurn
 }
-export interface Turn { id: string; request_id?: string; status?: string; events_url?: string }
+export interface Turn { id: string; request_id: string; turn_id: string; conversation_id: string; execution_no: number; status: string; events_url?: string }
 export interface TurnEvent {
   type: 'delta' | 'evidence' | 'completed' | 'error' | 'status'
+  request_id?: string
+  http_status?: number
   seq?: number
   text?: string
   evidence?: Evidence[]
@@ -76,13 +85,14 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export type ApiError = Error & { status?: number; code?: string; terminal?: boolean }
+
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }, { once: true })
+    const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, ms)
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
   })
 }
 
@@ -110,42 +120,50 @@ export const api = {
     method: 'POST', body: JSON.stringify({ title }),
   }),
   conversation: (id: string) => json<Conversation>(`/v1/conversations/${encodeURIComponent(id)}`),
-  createTurn: (conversationId: string, text: string, parentTurnId?: string) => json<Turn>(
+  turn: (id: string) => json<LastTurn>(`/v1/turns/${encodeURIComponent(id)}`),
+  createTurn: (conversationId: string, text: string, parentTurnId?: string, idempotencyKey: string = crypto.randomUUID()) => json<Turn>(
     `/v1/conversations/${encodeURIComponent(conversationId)}/turns`,
     {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: JSON.stringify({ text, ...(parentTurnId ? { parent_turn_id: parentTurnId } : {}) }),
     },
   ),
-  cancelTurn: (turnId: string) => json(`/v1/turns/${encodeURIComponent(turnId)}/cancel`, {
+  cancelTurn: (turnId: string) => json<{ request_id: string; status: string }>(`/v1/turns/${encodeURIComponent(turnId)}/cancel`, {
     method: 'POST', body: '{}',
   }),
   streamEvents(
     turnId: string,
     onEvent: (event: TurnEvent) => void,
     onDone: () => void,
-    onError: (reason: string) => void,
+    onError: (reason: ApiError) => void,
+    onConnection?: (state: 'connecting' | 'connected' | 'reconnecting') => void,
   ) {
     const controller = new AbortController()
     const deadline = Date.now() + 60_000
     let lastSeq = 0
     let finished = false
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; controller.abort() }, 60_000)
+    const fail = (error: ApiError) => { finished = true; clearTimeout(timer); onError(error) }
 
     const consume = async () => {
       let delay = 250
       while (!controller.signal.aborted && Date.now() < deadline && !finished) {
         try {
+          onConnection?.(lastSeq ? 'reconnecting' : 'connecting')
           const headers: Record<string, string> = { Accept: 'text/event-stream' }
           if (lastSeq > 0) headers['Last-Event-ID'] = String(lastSeq)
           const response = await fetch(`${base}/v1/turns/${encodeURIComponent(turnId)}/events`, {
             headers, signal: controller.signal,
           })
           if (response.status === 401 || response.status === 403 || response.status === 404) {
-            throw Object.assign(new Error(`事件流请求失败（${response.status}）`), { terminal: true })
+            const detail = await response.json().catch(() => null)
+            throw Object.assign(new Error(`事件流请求失败（${response.status}）`), { terminal: true, status: response.status, code: detail?.code })
           }
           if (!response.ok || !response.body) throw new Error(`事件流不可用（${response.status}）`)
 
+          onConnection?.('connected')
           const reader = response.body.getReader()
           const decoder = new TextDecoder()
           let buffer = ''
@@ -158,6 +176,8 @@ export const api = {
               const parsed = parseFrame(frame)
               if (!parsed.data) continue
               const event = JSON.parse(parsed.data) as TurnEvent
+              if (event.request_id && event.request_id !== turnId) throw Object.assign(new Error('事件请求标识不匹配'), { terminal: true })
+              if (event.type === 'error' && event.http_status) throw Object.assign(new Error(event.message ?? '事件流失败'), { status: event.http_status, code: event.code, terminal: true })
               const sequence = event.seq ?? Number(parsed.id ?? 0)
               if (!Number.isFinite(sequence) || sequence <= lastSeq) continue
               if (sequence !== lastSeq + 1) throw new Error('事件序号缺失，正在尝试恢复')
@@ -167,24 +187,26 @@ export const api = {
               if (event.type === 'completed') terminal = true
             }
           }
-          while (true) {
-            const { done, value } = await reader.read()
-            buffer += decoder.decode(value, { stream: !done })
-            consumeFrames(done)
-            if (done) break
-          }
+          try {
+            while (!terminal) {
+              const { done, value } = await reader.read()
+              buffer += decoder.decode(value, { stream: !done })
+              consumeFrames(done)
+              if (done) break
+            }
+          } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
           if (terminal) {
             finished = true
+            clearTimeout(timer)
             onDone()
             return
           }
           await wait(delay, controller.signal).catch(() => undefined)
           delay = Math.min(delay * 2, 4_000)
         } catch (error) {
-          if (controller.signal.aborted) return
+          if (controller.signal.aborted) { if (timedOut) fail(new Error('请求超过 60 秒期限')); return }
           if ((error as { terminal?: boolean }).terminal) {
-            finished = true
-            onError(error instanceof Error ? error.message : '事件流失败')
+            fail(error as ApiError)
             return
           }
           if (Date.now() + delay >= deadline) break
@@ -193,12 +215,11 @@ export const api = {
         }
       }
       if (!controller.signal.aborted && !finished) {
-        finished = true
-        onError('请求超过 60 秒期限或事件流中断')
+        fail(new Error('请求超过 60 秒期限或事件流中断'))
       }
     }
 
     void consume()
-    return () => controller.abort()
+    return () => { clearTimeout(timer); controller.abort() }
   },
 }

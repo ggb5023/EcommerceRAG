@@ -3,11 +3,14 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 import grpc
 from pathlib import Path
 
 from app.rag_service import FIXTURES, RagService, rag_pb2
 from app.authorization import ScopeError
+from app import rag_service
+from app.ingest.pipeline import load_manifest_index
 
 
 class Ctx:
@@ -97,6 +100,42 @@ class RagServiceTests(unittest.TestCase):
             context=request_context(), query="那个怎么样？", history_summary="user: 保温杯容量是多少？"), Ctx())
         self.assertEqual(response.intent, "knowledge")
         self.assertIn("保温杯容量", response.rewritten_query)
+
+    def test_vague_followup_without_history_entity_still_asks(self):
+        response = RagService(scope_validator=lambda scope: None).Understand(rag_pb2.UnderstandRequest(
+            context=request_context(), query="那个怎么样？", history_summary="user: 你好"), Ctx())
+        self.assertEqual(response.intent, "clarification")
+
+    def test_profile_configuration_rejects_unknown_and_inconsistent_modes(self):
+        root = Path(__file__).resolve().parents[2]
+        for profile, manifest in [("online", ""), ("synthetic_import_mock", ""),
+                                  ("m1_fixture_mock", str(root / "data/synthetic/ecommerce-demo-v1/manifest.yaml"))]:
+            env = {**os.environ, "PYTHONPATH": str(root / "python"),
+                   "RAG_PROFILE": profile, "SYNTHETIC_MANIFEST": manifest}
+            result = subprocess.run([sys.executable, "-c", "import app.rag_service"],
+                                    cwd=root, env=env, capture_output=True, text=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("consistent mock profile", result.stderr)
+
+    def test_synthetic_fact_routing_and_date_boundary(self):
+        root = Path(__file__).resolve().parents[2]
+        index = load_manifest_index(root / "data/synthetic/ecommerce-demo-v1/manifest.yaml")
+        scope = request_context(tenant_id="demo-tenant-a", shop_id="demo-shop-east",
+                                allowed_shop_ids=["demo-shop-east"],
+                                allowed_document_ids=["syn-products-a", "syn-public-facts-a"])
+        service = RagService(scope_validator=lambda scope: None)
+        with patch.object(rag_service, "_LOCAL_INDEX", index), patch.object(rag_service, "_BUSINESS_DATE", "2026-10-02"):
+            spec = list(service.Search(rag_pb2.SearchRequest(context=scope, query="SKU-CUP-480 保温杯材质"), Ctx()))
+            fact = list(service.Search(rag_pb2.SearchRequest(context=scope, query="SKU-CUP-480 库存"), Ctx()))
+            self.assertEqual({e.document_id for part in spec for e in part.evidence}, {"syn-products-a"})
+            self.assertEqual({e.document_id for part in fact for e in part.evidence}, {"syn-public-facts-a"})
+            evidence = [e for part in fact for e in part.evidence]
+            self.assertTrue(evidence)
+            with patch.object(rag_service, "_BUSINESS_DATE", "2026-10-03"):
+                expired = list(service.Search(rag_pb2.SearchRequest(context=scope, query="SKU-CUP-480 库存"), Ctx()))
+                self.assertFalse(any(part.evidence for part in expired))
+                with self.assertRaises(RuntimeError):
+                    list(service.Generate(rag_pb2.GenerateRequest(context=scope, evidence=evidence), Ctx()))
 
     def test_search_returns_versioned_fixture_and_request_correlation(self):
         responses = list(RagService(scope_validator=lambda scope: None).Search(rag_pb2.SearchRequest(
