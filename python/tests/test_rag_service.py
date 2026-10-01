@@ -23,7 +23,8 @@ class Ctx:
 
 def request_context(**kwargs):
     defaults = {"request_id": "r1", "tenant_id": "m1-tenant", "user_id": "m1-user",
-                "shop_id": "shop-demo", "allowed_shop_ids": ["shop-demo"]}
+                "shop_id": "shop-demo", "allowed_shop_ids": ["shop-demo"],
+                "permission_revision": "auth-v1"}
     defaults.update(kwargs)
     return rag_pb2.RequestContext(**defaults)
 
@@ -91,6 +92,12 @@ class RagServiceTests(unittest.TestCase):
         responses = list(service.Search(rag_pb2.SearchRequest(
             context=request_context(shop_id="other", allowed_shop_ids=["other"]), query="配送"), Ctx()))
         self.assertEqual(sum(len(response.evidence) for response in responses), 0)
+
+    def test_search_rejects_missing_revision_or_empty_scope(self):
+        service = RagService()
+        for context in [request_context(permission_revision=""), request_context(allowed_shop_ids=[], all_shops=False)]:
+            responses = list(service.Search(rag_pb2.SearchRequest(context=context, query="配送"), Ctx()))
+            self.assertEqual(sum(len(response.evidence) for response in responses), 0)
 
     def test_generate_filters_internal_unclassified_and_ineligible_evidence(self):
         request = rag_pb2.GenerateRequest(context=request_context(), query="x", evidence=[

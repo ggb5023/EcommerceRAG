@@ -28,12 +28,14 @@ import (
 const turnTimeout = 60 * time.Second
 
 type mockSession struct {
-	tenantID int64
-	userID   int64
-	tenant   string
-	user     string
-	shop     string
-	role     string
+	tenantID           int64
+	userID             int64
+	tenant             string
+	user               string
+	shop               string
+	role               string
+	permissionRevision string
+	revokedAt          *time.Time
 }
 
 type gateway struct {
@@ -47,6 +49,53 @@ type gateway struct {
 type apiError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+func (g *gateway) refreshAuthorization(ctx context.Context) error {
+	var role, revision string
+	var revokedAt *time.Time
+	var shops []string
+	err := g.db.QueryRow(ctx, `SELECT role,shop_ids,permission_revision,revoked_at
+		FROM app_user WHERE tenant_id=$1 AND id=$2`, g.session.tenantID, g.session.userID).
+		Scan(&role, &shops, &revision, &revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return status.Error(codes.PermissionDenied, "identity_not_found")
+	}
+	if err != nil {
+		return status.Error(codes.Unavailable, "authorization_unavailable")
+	}
+	if revokedAt != nil {
+		return status.Error(codes.PermissionDenied, "identity_revoked")
+	}
+	if role != g.session.role || revision != g.session.permissionRevision {
+		return status.Error(codes.PermissionDenied, "permission_changed")
+	}
+	allowed := false
+	for _, shop := range shops {
+		if shop == g.session.shop {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return status.Error(codes.PermissionDenied, "shop_not_authorized")
+	}
+	return nil
+}
+
+func (g *gateway) authorizeHTTP(w http.ResponseWriter, r *http.Request) bool {
+	if g.db == nil { // unit tests construct a handler-only gateway
+		return true
+	}
+	if err := g.refreshAuthorization(r.Context()); err != nil {
+		code := http.StatusForbidden
+		if status.Code(err) == codes.Unavailable {
+			code = http.StatusServiceUnavailable
+		}
+		writeError(w, code, strings.TrimPrefix(status.Code(err).String(), "Code."), "authorization failed")
+		return false
+	}
+	return true
 }
 
 func main() {
@@ -95,6 +144,9 @@ func main() {
 		}
 		log.Fatalf("load mock session (apply migrations first): %v", err)
 	}
+	if err = db.QueryRow(ctx, `SELECT permission_revision FROM app_user WHERE tenant_id=$1 AND id=$2`, session.tenantID, session.userID).Scan(&session.permissionRevision); err != nil {
+		log.Fatalf("load permission revision: %v", err)
+	}
 	conn, err := grpc.NewClient(ragAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("connect RAG service: %v", err)
@@ -134,7 +186,12 @@ func (g *gateway) routes() http.Handler {
 	mux.HandleFunc("GET /v1/turns/{id}", g.getTurn)
 	mux.HandleFunc("GET /v1/turns/{id}/events", g.events)
 	mux.HandleFunc("POST /v1/turns/{id}/cancel", g.cancelTurn)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" && !g.authorizeHTTP(w, r) {
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func (g *gateway) health(w http.ResponseWriter, r *http.Request) {
@@ -146,10 +203,17 @@ func (g *gateway) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *gateway) getSession(w http.ResponseWriter, _ *http.Request) {
+	if g.db != nil {
+		if err := g.refreshAuthorization(context.Background()); err != nil {
+			writeError(w, http.StatusForbidden, "permission_denied", "authorization failed")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenantId": g.session.tenant, "userId": g.session.user, "role": g.session.role,
 		"shopId": g.session.shop, "shopName": "M1 演示店铺", "displayName": "M1 演示客服",
-		"is_mock": true,
+		"permission_revision": g.session.permissionRevision,
+		"is_mock":             true,
 	})
 }
 
@@ -526,7 +590,7 @@ func (g *gateway) runTurn(ctx context.Context, requestID string, conversationID,
 	}
 	_ = writeEvent("status", map[string]any{"type": "status", "status": "EXECUTING", "is_mock": true})
 	base := &ragv1.RequestContext{RequestId: requestID, TenantId: g.session.tenant, UserId: g.session.user,
-		ShopId: g.session.shop, Role: g.session.role, AllowedShopIds: []string{g.session.shop}, PermissionRevision: "m1-seed-v1"}
+		ShopId: g.session.shop, Role: g.session.role, AllowedShopIds: []string{g.session.shop}, PermissionRevision: g.session.permissionRevision}
 	routed, err := g.rag.Understand(ctx, &ragv1.UnderstandRequest{Context: base, Query: query,
 		HistorySummary: g.historySummary(ctx, conversationID, turnID)})
 	if err != nil {

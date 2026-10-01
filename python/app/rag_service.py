@@ -95,11 +95,15 @@ def _fixture_matches(query: str) -> list[dict[str, str]]:
 
 def _allowed(ctx: Any, fixture: dict[str, str]) -> bool:
     shops = set(ctx.allowed_shop_ids)
-    if not ctx.tenant_id or fixture["tenant_id"] != ctx.tenant_id:
+    if not ctx.tenant_id or not ctx.user_id or not ctx.permission_revision:
+        return False
+    if fixture["tenant_id"] != ctx.tenant_id:
         return False
     if ctx.shop_id and fixture["shop_id"] != ctx.shop_id:
         return False
-    return bool(ctx.all_shops or fixture["shop_id"] in shops)
+    if ctx.all_shops:
+        return bool(ctx.role in {"owner", "admin"} and shops)
+    return bool(shops and fixture["shop_id"] in shops)
 
 
 class RagService(rag_pb2_grpc.RagServiceServicer):
