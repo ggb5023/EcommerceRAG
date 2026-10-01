@@ -1,0 +1,8 @@
+{
+  "responses": [
+    {"slot": "control", "provider_request_id": "redacted-control-1", "status": 200, "latency_ms": 12, "usage": {"tokens": 10}, "structured": {"intent": "product"}},
+    {"slot": "embedding", "provider_request_id": "redacted-embedding-1", "status": 200, "latency_ms": 18, "usage": {"tokens": 8}, "dimensions": 1024, "output": "dense&sparse"},
+    {"slot": "rerank", "provider_request_id": "redacted-rerank-1", "status": 200, "latency_ms": 15, "usage": {"tokens": 20}, "items": [{"index": 0, "score": 0.9}, {"index": 1, "score": 0.2}]},
+    {"slot": "generation", "provider_request_id": "redacted-generation-1", "status": 200, "latency_ms": 21, "usage": {"tokens": 30}, "structured": {"finish_reason": "stop"}}
+  ]
+}
