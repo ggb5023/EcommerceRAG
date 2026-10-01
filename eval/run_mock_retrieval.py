@@ -81,6 +81,25 @@ def semantic_issues(cases: list[dict]) -> list[str]:
     return issues
 
 
+def m2_gate_status() -> dict[str, object]:
+    """Declare external-input readiness without reading secrets or network state."""
+    requirements = {
+        "identity_roles_revocation": False,
+        "tenant_shop_mapping": False,
+        "material_authorization_external_allowed": False,
+        "business_date_rules": False,
+        "provider_endpoint_region_models": False,
+        "provider_embedding_quota_usage_request_id": False,
+        "material_versions_license_redaction": False,
+    }
+    return {
+        "status": "BLOCKED",
+        "real_service_acceptance": False,
+        "requirements": requirements,
+        "missing": sorted(key for key, ready in requirements.items() if not ready),
+    }
+
+
 def load_fixture_doc_ids(path: Path | None) -> set[str] | None:
     """Load an optional, metadata-only document ID fixture.
 
@@ -202,6 +221,7 @@ def main() -> int:
             "fixture_sha256": file_sha256(args.fixture_doc_ids) if args.fixture_doc_ids else None,
         },
         "real_service_acceptance": False,
+        "m2_gate": m2_gate_status(),
         "results": {
             "retrieval_cases": counts["retrieval"],
             "refusal_cases": counts["refusal"],

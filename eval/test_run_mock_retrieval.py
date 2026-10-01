@@ -108,6 +108,12 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertEqual(counts, {"PASS": 1, "FAIL": 1})
         self.assertEqual(failed, ["bad"])
 
+    def test_m2_gate_is_blocked_until_external_inputs_are_recorded(self):
+        gate = MODULE.m2_gate_status()
+        self.assertEqual(gate["status"], "BLOCKED")
+        self.assertFalse(gate["real_service_acceptance"])
+        self.assertEqual(len(gate["missing"]), 7)
+
 
 if __name__ == "__main__":
     unittest.main()

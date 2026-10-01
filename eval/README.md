@@ -53,6 +53,11 @@ guidance points, and multi-turn cases require both the `multi_turn` tag and a
 target document/routing reference.
 With `--include-cases`, the report also includes status counts and a list of
 failed case IDs only; it does not include query or answer text.
+Every report also contains an `m2_gate` object. It remains `BLOCKED` until
+identity/role revocation, tenant/shop mapping, material authorization,
+business-date rules, Provider contract, and material version/license/redaction
+inputs are separately recorded. The evaluator never infers readiness from
+local fixtures.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer
