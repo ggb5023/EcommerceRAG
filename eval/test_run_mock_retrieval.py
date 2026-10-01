@@ -84,6 +84,13 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertIn("incomplete_authorization:u", issues)
         self.assertIn("unauthorized_missing_target_evidence:u", issues)
 
+    def test_semantic_checks_require_guidance_and_clarification_evidence(self):
+        refusal = {"case_id": "r", "tags": ["unanswerable"], "expected_answer_points": []}
+        clarification = {"case_id": "c", "tags": ["multi_turn"], "expected_answer_points": ["补充对象"]}
+        issues = MODULE.semantic_issues([refusal, clarification])
+        self.assertIn("missing_refusal_guidance:r", issues)
+        self.assertIn("incomplete_clarification_evidence:c", issues)
+
     def test_fixture_reports_missing_expected_documents(self):
         cases = [{"case_id": "r", "tags": ["product_knowledge"], "expected_doc_ids": ["d1", "d2"]}]
         result = MODULE.case_results(cases, {"d1"})[0]

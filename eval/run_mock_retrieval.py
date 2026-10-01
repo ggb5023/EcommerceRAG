@@ -64,6 +64,23 @@ def authorization_issues(cases: list[dict]) -> list[str]:
     return issues
 
 
+def semantic_issues(cases: list[dict]) -> list[str]:
+    issues: list[str] = []
+    for case in cases:
+        case_id = case.get("case_id", "<missing>")
+        kind = classify(case)
+        points = case.get("expected_answer_points")
+        if not isinstance(points, list) or not all(isinstance(point, str) and point.strip() for point in points):
+            issues.append(f"invalid_answer_points:{case_id}")
+        if kind == "clarification":
+            tags = set(case.get("tags", []))
+            if "multi_turn" not in tags or not case.get("expected_doc_ids"):
+                issues.append(f"incomplete_clarification_evidence:{case_id}")
+        if kind in {"refusal", "unauthorized"} and not points:
+            issues.append(f"missing_refusal_guidance:{case_id}")
+    return issues
+
+
 def load_fixture_doc_ids(path: Path | None) -> set[str] | None:
     """Load an optional, metadata-only document ID fixture.
 
@@ -147,6 +164,7 @@ def main() -> int:
     issues.extend(f"conflicting_tags:{case_id}" for case_id in tag_conflicts)
     issues.extend(input_drift_issues(cases, metadata))
     issues.extend(authorization_issues(cases))
+    issues.extend(semantic_issues(cases))
     retrieval_total = counts["retrieval"]
     evidence_total = sum(bool(case.get("expected_doc_ids")) for case in cases)
     retrieval_cases = [case for case in cases if classify(case) == "retrieval"]

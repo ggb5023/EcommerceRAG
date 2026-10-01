@@ -48,6 +48,9 @@ Authorization fields are checked for tenant, shop, and role completeness;
 unauthorized cases must retain a target evidence/document reference. The
 synthetic set models an unauthorized request with a normal operator context,
 so the evaluator does not invent a `denied` shop or role.
+Answer points must be non-empty strings. Refusal/unauthorized cases require
+guidance points, and multi-turn cases require both the `multi_turn` tag and a
+target document/routing reference.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer
