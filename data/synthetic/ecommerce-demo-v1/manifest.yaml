@@ -34,6 +34,7 @@ documents:
     effective_from: 2026-01-01
     effective_to: null
     source_type: synthetic
+    sha256: 806c6510079cdf8fb515caee449d334afd48e66ceed31fe4ba99f25ea7c233a8
   - document_id: syn-policy-a
     path: policies.md
     format: markdown
@@ -44,6 +45,7 @@ documents:
     effective_from: 2026-01-01
     effective_to: null
     source_type: synthetic
+    sha256: 14d8ee3a644ae7d3a03b6554d948e24bbb74095fb97caf32d8043a76a42e9cfc
   - document_id: syn-faq-a
     path: faq.md
     format: markdown
@@ -54,6 +56,7 @@ documents:
     effective_from: 2026-01-01
     effective_to: null
     source_type: synthetic
+    sha256: 5673702d09a8d7341f63adbfcf5fff70ebe117179bffab7ca94c322a70482324
   - document_id: syn-facts-a
     path: facts.csv
     format: csv
@@ -64,6 +67,7 @@ documents:
     effective_from: 2026-09-29
     effective_to: 2026-10-01
     source_type: synthetic
+    sha256: 0b63a4d4c8c6cde8c573cb9445a3a96ec234ff12626073ab5bf0d883675fdd01
   - document_id: syn-acl-a
     path: acl.yaml
     format: yaml
@@ -74,6 +78,7 @@ documents:
     effective_from: 2026-01-01
     effective_to: null
     source_type: synthetic
+    sha256: 1a394e9f7542de6acdcf7def2341000aa69decc81bc257c72a2acee80f0f8ec9
   - document_id: syn-products-b
     path: products.csv
     format: csv
@@ -84,6 +89,7 @@ documents:
     effective_from: 2026-01-01
     effective_to: null
     source_type: synthetic
+    sha256: 806c6510079cdf8fb515caee449d334afd48e66ceed31fe4ba99f25ea7c233a8
   - document_id: syn-policy-revoked
     path: policies.md
     format: markdown
@@ -94,3 +100,4 @@ documents:
     effective_from: 2026-01-01
     effective_to: 2026-06-01
     source_type: synthetic
+    sha256: 14d8ee3a644ae7d3a03b6554d948e24bbb74095fb97caf32d8043a76a42e9cfc

@@ -15,6 +15,7 @@ import yaml
 ALLOWED_FORMATS = {"csv", "markdown", "yaml"}
 ALLOWED_DISCLOSURE = {"external_allowed", "internal_only", "unclassified"}
 ALLOWED_ROLES = {"owner", "admin", "operator", "viewer"}
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 STATE_ROOT = Path(".local/ingest-state")
 
 
@@ -187,6 +188,12 @@ def validate_manifest(manifest_path: Path) -> ValidationResult:
             errors.append(f"{prefix}.path: file not found: {relative}")
             continue
         content = target.read_bytes()
+        actual_sha256 = sha256_bytes(content)
+        declared_sha256 = document.get("sha256")
+        if not isinstance(declared_sha256, str) or not SHA256_RE.fullmatch(declared_sha256):
+            errors.append(f"{prefix}.sha256: must be 64 lowercase hexadecimal characters")
+        elif declared_sha256 != actual_sha256:
+            errors.append(f"{prefix}.sha256: mismatch (declared does not match file)")
         file_info = {
             "document_id": document_id,
             "path": relative,
@@ -196,7 +203,7 @@ def validate_manifest(manifest_path: Path) -> ValidationResult:
             "disclosure_class": disclosure,
             "effective_from": document.get("effective_from").isoformat() if isinstance(document.get("effective_from"), date) else document.get("effective_from"),
             "effective_to": document.get("effective_to").isoformat() if isinstance(document.get("effective_to"), date) else document.get("effective_to"),
-            "sha256": sha256_bytes(content),
+            "sha256": actual_sha256,
             "size_bytes": len(content),
         }
         files[document_id] = file_info

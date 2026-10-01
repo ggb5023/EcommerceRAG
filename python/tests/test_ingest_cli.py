@@ -61,8 +61,17 @@ class IngestValidationTests(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         (self.root / "faq.md").write_text((self.root / "faq.md").read_text() + "\nchanged\n")
         changed = validate_manifest(self.manifest())
-        self.assertTrue(changed.ok, changed.errors)
-        self.assertNotEqual(result.dataset_sha256, changed.dataset_sha256)
+        self.assertFalse(changed.ok)
+        self.assertTrue(any("sha256: mismatch" in error for error in changed.errors))
+
+    def test_rejects_declared_hash_mismatch(self):
+        path = self.manifest()
+        text = path.read_text()
+        marker = "sha256: 806c6510079cdf8fb515caee449d334afd48e66ceed31fe4ba99f25ea7c233a8"
+        path.write_text(text.replace(marker, "sha256: " + "0" * 64, 1))
+        result = validate_manifest(path)
+        self.assertFalse(result.ok)
+        self.assertTrue(any("sha256:" in error for error in result.errors))
 
     def test_invalid_format_rejects_whole_package(self):
         path = self.manifest()
@@ -113,8 +122,8 @@ class IngestValidationTests(unittest.TestCase):
                 (self.root / "policies.md").write_text((self.root / "policies.md").read_text() + "\n新增合成说明。\n")
                 changed = validate_manifest(self.manifest())
                 ok, message = import_dataset(changed)
-                self.assertTrue(ok)
-                self.assertIn("UPDATED", message)
+                self.assertFalse(ok)
+                self.assertIn("validation failed", message)
                 payload = json.loads(next(Path(state).glob("*.json")).read_text())
                 self.assertEqual(payload["synthetic"], True)
                 self.assertEqual(payload["license"], "internal-generated")
