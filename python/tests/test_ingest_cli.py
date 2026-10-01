@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from app.ingest.cli import import_dataset, validate_manifest
+from app.ingest.pipeline import load_manifest_index
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "data/synthetic/ecommerce-demo-v1"
@@ -104,6 +105,40 @@ class IngestValidationTests(unittest.TestCase):
                 self.assertTrue(any(record["document_id"] == "syn-acl-a" for record in payload["records"]))
             finally:
                 cli._state_root = original
+
+    def test_markdown_csv_and_acl_pipeline_retrieval(self):
+        index = load_manifest_index(self.manifest())
+        results = index.search("保温杯 容量", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})
+        self.assertTrue(results)
+        self.assertEqual(results[0]["document_id"], "syn-products-a")
+        self.assertTrue(results[0]["is_mock"])
+        self.assertIn("chunk_id", results[0])
+        other = index.search("万用表", tenant_id="demo-tenant-b", allowed_shop_ids={"demo-shop-central"})
+        self.assertTrue(other)
+        self.assertTrue(all("demo-tenant-a" not in item["content"] for item in other))
+
+    def test_effective_date_and_disclosure_filter(self):
+        index = load_manifest_index(self.manifest())
+        self.assertEqual(index.search("库存", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"}, business_date="2026-10-01"), [])
+        admin = index.search("库存", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"}, role="admin", business_date="2026-09-30")
+        self.assertTrue(admin)
+        self.assertTrue(all(item["disclosure_class"] == "internal_only" for item in admin))
+
+    def test_version_switch_keeps_old_index_isolated(self):
+        first = load_manifest_index(self.manifest(), version_id="version-old")
+        second = load_manifest_index(self.manifest(), version_id="version-new")
+        first_results = first.search("保温杯 容量", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})
+        second_results = second.search("保温杯 容量", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})
+        self.assertTrue(first_results and second_results)
+        self.assertTrue(all(item["version_id"] == "version-old" for item in first_results))
+        self.assertTrue(all(item["version_id"] == "version-new" for item in second_results))
+        self.assertNotEqual(first_results[0]["chunk_id"], second_results[0]["chunk_id"])
+
+    def test_evidence_has_traceable_citation_fields(self):
+        index = load_manifest_index(self.manifest())
+        item = index.search("配送 退货", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})[0]
+        for field in ("document_id", "version_id", "chunk_id", "source_ref", "content", "score", "rank", "citation_index", "disclosure_class", "is_mock"):
+            self.assertIn(field, item)
 
     def test_import_is_idempotent_then_updates_on_source_change(self):
         result = validate_manifest(self.manifest())

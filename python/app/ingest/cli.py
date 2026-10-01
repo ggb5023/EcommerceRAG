@@ -297,6 +297,13 @@ def main(argv: list[str] | None = None) -> int:
         cmd.add_argument("--manifest", type=Path, required=True)
     status = sub.add_parser("status")
     status.add_argument("--dataset", required=True)
+    search = sub.add_parser("index-search")
+    search.add_argument("--manifest", type=Path, required=True)
+    search.add_argument("--query", required=True)
+    search.add_argument("--tenant", required=True)
+    search.add_argument("--shop", default=None)
+    search.add_argument("--role", default="viewer")
+    search.add_argument("--business-date", default=None)
     args = parser.parse_args(argv)
     if args.command in {"validate", "import"}:
         result = validate_manifest(args.manifest)
@@ -311,6 +318,18 @@ def main(argv: list[str] | None = None) -> int:
             print(message)
             return 0 if ok else 1
         return 0
+    if args.command == "index-search":
+        from .pipeline import load_manifest_index
+        try:
+            index = load_manifest_index(args.manifest)
+            print(json.dumps(index.search(args.query, tenant_id=args.tenant, shop_id=args.shop,
+                                          allowed_shop_ids={args.shop} if args.shop else set(),
+                                          role=args.role, business_date=args.business_date),
+                             ensure_ascii=False, sort_keys=True))
+            return 0
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"FAIL index-search: {exc}")
+            return 1
     ok, message = status_dataset(args.dataset)
     print(message)
     return 0 if ok else 1

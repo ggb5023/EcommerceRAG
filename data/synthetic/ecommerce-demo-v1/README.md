@@ -19,3 +19,13 @@ python -m app.ingest status --dataset ecommerce-demo-v1
 ```
 
 首版导入器使用本地文件和 `.local/ingest-state` 状态目录，不接入 OSS、PostgreSQL、真实身份、在线 Provider 或客服在线链路。任一校验错误会拒绝整个数据包，不产生部分索引。ACL YAML 只作为内部测试记录导入，不会授予真实权限。
+
+本地检索入口：
+
+```bash
+PYTHONPATH=python python3 -m app.ingest index-search \
+  --manifest data/synthetic/ecommerce-demo-v1/manifest.yaml \
+  --query '保温杯 容量' --tenant demo-tenant-a --shop demo-shop-east
+```
+
+索引使用确定性本地关键词匹配，返回 document/version/chunk、来源、评分、引用序号和披露级别。ACL YAML 不会进入 customer evidence；内部资料只对合成 admin/owner 检索可见。DOCX 解析支持标准 WordprocessingML，未安装可选 `python-docx` 时使用受限内置解析器。
