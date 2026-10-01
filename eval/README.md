@@ -7,12 +7,12 @@ control scenarios. Amazon data and live web snapshots are out of scope for the
 first set.
 
 The authoritative source and responsibility matrix is in
-`.local/dev-docs/docs/数据来源与评测输入.md`. There is currently no real
-business owner or real merchant corpus. Engineering may review synthetic case
-structure and provisional thresholds, but that is not approval of a merchant
-policy or `external_allowed` classification. A support agent may review
-usability and wording only unless formally authorized to approve a merchant's
-content.
+`.local/dev-docs/docs/数据来源与评测输入.md`. Codex owns synthetic dataset
+construction, evaluation review, public-source/license checks, heuristic UX
+review, and synthetic tenant/role fixtures for the prototype. These are
+engineering outputs; they do not assert real merchant policy, real identity
+integration, or production authorization. Real merchant inputs are deferred
+until the prototype is runnable and a real trial is planned.
 
 `build_synthetic_eval.py` creates 60 deterministic cases with concrete product,
 policy, factual, freshness, refusal, multi-turn, and authorization scenarios.
