@@ -101,3 +101,10 @@ describe('SSE transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('workspace contracts', () => {
+  it('exposes the conversation route without changing the API boundary', async () => {
+    const { routes } = await import('./routes')
+    expect(routes.map((route) => route.path)).toEqual(['/', '/chat', '/chat/:conversation_id', '/:pathMatch(.*)*'])
+  })
+})
