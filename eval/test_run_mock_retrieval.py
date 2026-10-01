@@ -69,6 +69,21 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         issues = MODULE.input_drift_issues(cases, {"eval_set_version": "current", "source_type": "synthetic"})
         self.assertEqual(issues, ["source_version_drift:x"])
 
+    def test_authorization_checks_preserve_synthetic_scope_semantics(self):
+        cases = [{
+            "case_id": "u",
+            "tags": ["unauthorized"],
+            "authorization": {"tenant_id": "t", "shop_id": "shop-demo", "role": "operator"},
+            "expected_doc_ids": ["syn-acl-shop"],
+        }]
+        self.assertEqual(MODULE.authorization_issues(cases), [])
+
+    def test_authorization_requires_fields_and_target_for_unauthorized_case(self):
+        cases = [{"case_id": "u", "tags": ["unauthorized"], "authorization": {}, "expected_doc_ids": []}]
+        issues = MODULE.authorization_issues(cases)
+        self.assertIn("incomplete_authorization:u", issues)
+        self.assertIn("unauthorized_missing_target_evidence:u", issues)
+
     def test_fixture_reports_missing_expected_documents(self):
         cases = [{"case_id": "r", "tags": ["product_knowledge"], "expected_doc_ids": ["d1", "d2"]}]
         result = MODULE.case_results(cases, {"d1"})[0]

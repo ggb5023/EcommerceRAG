@@ -51,6 +51,19 @@ def input_drift_issues(cases: list[dict], metadata: dict) -> list[str]:
     return issues
 
 
+def authorization_issues(cases: list[dict]) -> list[str]:
+    issues: list[str] = []
+    for case in cases:
+        tags = set(case.get("tags", []))
+        auth = case.get("authorization", {})
+        case_id = case.get("case_id", "<missing>")
+        if not all(isinstance(auth.get(field), str) and auth.get(field) for field in ("tenant_id", "shop_id", "role")):
+            issues.append(f"incomplete_authorization:{case_id}")
+        if "unauthorized" in tags and not case.get("expected_doc_ids"):
+            issues.append(f"unauthorized_missing_target_evidence:{case_id}")
+    return issues
+
+
 def load_fixture_doc_ids(path: Path | None) -> set[str] | None:
     """Load an optional, metadata-only document ID fixture.
 
@@ -133,6 +146,7 @@ def main() -> int:
             tag_conflicts.append(case.get("case_id", "<missing>"))
     issues.extend(f"conflicting_tags:{case_id}" for case_id in tag_conflicts)
     issues.extend(input_drift_issues(cases, metadata))
+    issues.extend(authorization_issues(cases))
     retrieval_total = counts["retrieval"]
     evidence_total = sum(bool(case.get("expected_doc_ids")) for case in cases)
     retrieval_cases = [case for case in cases if classify(case) == "retrieval"]

@@ -44,6 +44,10 @@ stable local run ID, and a fixture hash when supplied; the timestamp is run
 metadata and is not used as an evaluation value. `expected_evidence_rate`
 means only that cases declare expected documents; it is not runtime evidence
 coverage. Source type/version drift is reported as input integrity failure.
+Authorization fields are checked for tenant, shop, and role completeness;
+unauthorized cases must retain a target evidence/document reference. The
+synthetic set models an unauthorized request with a normal operator context,
+so the evaluator does not invent a `denied` shop or role.
 
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer
