@@ -62,6 +62,46 @@ func TestGRPCFailureProducesStructuredM1Codes(t *testing.T) {
 	}
 }
 
+func TestAuthorizationFailureCodes(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{status.Error(codes.PermissionDenied, "identity_revoked"), "identity_revoked"},
+		{status.Error(codes.PermissionDenied, "permission_changed"), "permission_changed"},
+		{status.Error(codes.PermissionDenied, "shop_not_authorized"), "shop_not_authorized"},
+		{status.Error(codes.PermissionDenied, "no_shop_authorized"), "no_shop_authorized"},
+		{status.Error(codes.Unavailable, "authorization_unavailable"), "authorization_unavailable"},
+	}
+	for _, tc := range cases {
+		if got := authorizationFailureCode(tc.err); got != tc.want {
+			t.Errorf("authorizationFailureCode(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestViewerCannotWrite(t *testing.T) {
+	g := &gateway{session: mockSession{role: "viewer"}}
+	response := httptest.NewRecorder()
+	if g.requireWriteRole(response) {
+		t.Fatal("viewer was allowed to write")
+	}
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "role_forbidden") {
+		t.Fatalf("unexpected viewer response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAuthorizationCacheKeyBindsPermissionRevision(t *testing.T) {
+	oldKey := authorizationCacheKey("tenant-a", "user-a", "auth-v1", "shop-east", "retrieval", "query-hash")
+	newKey := authorizationCacheKey("tenant-a", "user-a", "auth-v2", "shop-east", "retrieval", "query-hash")
+	if oldKey == newKey {
+		t.Fatal("permission revision must change authorization cache key")
+	}
+	if !strings.Contains(oldKey, ":auth-v1:") {
+		t.Fatalf("cache key does not expose revision component: %q", oldKey)
+	}
+}
+
 func TestFirst24CountsUnicodeRunes(t *testing.T) {
 	got := first24("甲乙丙丁戊己庚辛壬癸甲乙丙丁戊己庚辛壬癸甲乙丙丁戊")
 	if len([]rune(got)) != 24 {

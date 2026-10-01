@@ -1,0 +1,3 @@
+sku,product_name,category,shop_id,tenant_id,color,specification,care,price_cents,synthetic,provisional,license
+SKU-BAG-WEST-01,云杉通勤背包,travel,demo-shop-west,demo-tenant-a,深灰,18L;可调肩带;防泼水面料,使用后通风晾干;避免长时间暴晒,11900,true,true,internal-generated
+SKU-MUG-WEST-01,晴岚马克杯,drinkware,demo-shop-west,demo-tenant-a,米白,350ml;陶瓷;带杯盖,手洗并擦干;避免骤冷骤热,4900,true,true,internal-generated

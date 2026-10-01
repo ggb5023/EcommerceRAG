@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10rag/v1/rag.proto\x12\x06rag.v1\"\x8a\x02\n\x0eRequestContext\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x1b\n\ttenant_id\x18\x02 \x01(\tR\x08tenantId\x12\x17\n\x07user_id\x18\x03 \x01(\tR\x06userId\x12(\n\x10\x61llowed_shop_ids\x18\x04 \x03(\tR\x0e\x61llowedShopIds\x12\x1b\n\tall_shops\x18\x05 \x01(\x08R\x08\x61llShops\x12/\n\x13permission_revision\x18\x06 \x01(\tR\x12permissionRevision\x12\x17\n\x07shop_id\x18\x07 \x01(\tR\x06shopId\x12\x12\n\x04role\x18\x08 \x01(\tR\x04role\"\xef\x02\n\x08\x45vidence\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n\x07\x63ontent\x18\x02 \x01(\tR\x07\x63ontent\x12\x1f\n\x0bsource_type\x18\x03 \x01(\tR\nsourceType\x12\x1d\n\nsource_ref\x18\x04 \x01(\tR\tsourceRef\x12\x1f\n\x0b\x64ocument_id\x18\x05 \x01(\tR\ndocumentId\x12\x1d\n\nversion_id\x18\x06 \x01(\tR\tversionId\x12\x17\n\x07page_no\x18\x07 \x01(\x05R\x06pageNo\x12\x12\n\x04rank\x18\x08 \x01(\x05R\x04rank\x12\x1b\n\traw_score\x18\t \x01(\x01R\x08rawScore\x12\x17\n\x07shop_id\x18\n \x01(\tR\x06shopId\x12)\n\x10\x64isclosure_class\x18\x0b \x01(\tR\x0f\x64isclosureClass\x12+\n\x11\x63ustomer_eligible\x18\x0c \x01(\x08R\x10\x63ustomerEligible\"|\n\x04\x46\x61\x63t\x12\x1b\n\ttool_name\x18\x01 \x01(\tR\x08toolName\x12\x1d\n\nvalue_json\x18\x02 \x01(\tR\tvalueJson\x12\x1f\n\x0bobserved_at\x18\x03 \x01(\tR\nobservedAt\x12\x17\n\x07is_mock\x18\x04 \x01(\x08R\x06isMock\"\x84\x01\n\x11UnderstandRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x14\n\x05query\x18\x02 \x01(\tR\x05query\x12\'\n\x0fhistory_summary\x18\x03 \x01(\tR\x0ehistorySummary\"\xc2\x02\n\x12UnderstandResponse\x12\'\n\x0frewritten_query\x18\x01 \x01(\tR\x0erewrittenQuery\x12\x16\n\x06intent\x18\x02 \x01(\tR\x06intent\x12-\n\x12information_source\x18\x03 \x01(\tR\x11informationSource\x12.\n\x13required_fact_tools\x18\x04 \x03(\tR\x11requiredFactTools\x12$\n\rclarification\x18\x05 \x01(\tR\rclarification\x12.\n\x08\x65ntities\x18\x06 \x03(\x0b\x32\x12.rag.v1.EntitySlotR\x08\x65ntities\x12\x1e\n\nconfidence\x18\x07 \x01(\x01R\nconfidence\x12\x16\n\x06reason\x18\x08 \x01(\tR\x06reason\"V\n\nEntitySlot\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value\x12\x1e\n\nconfidence\x18\x03 \x01(\x01R\nconfidence\"\xb6\x01\n\rSearchRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x14\n\x05query\x18\x02 \x01(\tR\x05query\x12\x32\n\x15\x61llow_external_search\x18\x03 \x01(\x08R\x13\x61llowExternalSearch\x12)\n\x10response_purpose\x18\x04 \x01(\tR\x0fresponsePurpose\"\xf0\x01\n\x0eSearchResponse\x12\x14\n\x05phase\x18\x01 \x01(\tR\x05phase\x12,\n\x08\x65vidence\x18\x02 \x03(\x0b\x32\x10.rag.v1.EvidenceR\x08\x65vidence\x12\x1a\n\x08\x63omplete\x18\x03 \x01(\x08R\x08\x63omplete\x12\'\n\x0f\x64\x65graded_stages\x18\x04 \x03(\tR\x0e\x64\x65gradedStages\x12\x1d\n\nrequest_id\x18\x05 \x01(\tR\trequestId\x12\x17\n\x07is_mock\x18\x06 \x01(\x08R\x06isMock\x12\x1d\n\nerror_code\x18\x07 \x01(\tR\terrorCode\"\xd6\x01\n\x0fGenerateRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x14\n\x05query\x18\x02 \x01(\tR\x05query\x12,\n\x08\x65vidence\x18\x03 \x03(\x0b\x32\x10.rag.v1.EvidenceR\x08\x65vidence\x12\"\n\x05\x66\x61\x63ts\x18\x04 \x03(\x0b\x32\x0c.rag.v1.FactR\x05\x66\x61\x63ts\x12)\n\x10response_purpose\x18\x05 \x01(\tR\x0fresponsePurpose\"\x8f\x02\n\x10GenerateResponse\x12\x1a\n\x08sequence\x18\x01 \x01(\x04R\x08sequence\x12\x16\n\x05\x64\x65lta\x18\x02 \x01(\tH\x00R\x05\x64\x65lta\x12.\n\x08\x63itation\x18\x03 \x01(\x0b\x32\x10.rag.v1.EvidenceH\x00R\x08\x63itation\x12\x1f\n\nusage_json\x18\x04 \x01(\tH\x00R\tusageJson\x12\x14\n\x04\x64one\x18\x05 \x01(\x08H\x00R\x04\x64one\x12\x1f\n\nerror_code\x18\x06 \x01(\tH\x00R\terrorCode\x12\x19\n\x07is_mock\x18\x07 \x01(\x08H\x00R\x06isMock\x12\x1b\n\x08\x63\x61n_copy\x18\x08 \x01(\x08H\x00R\x07\x63\x61nCopyB\x07\n\x05\x65vent\"\xd1\x01\n\rSubmitRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\'\n\x0fidempotency_key\x18\x02 \x01(\tR\x0eidempotencyKey\x12\x1b\n\tsource_id\x18\x03 \x01(\tR\x08sourceId\x12\x1d\n\nobject_key\x18\x04 \x01(\tR\tobjectKey\x12)\n\x10pipeline_version\x18\x05 \x01(\tR\x0fpipelineVersion\"R\n\x0eSubmitResponse\x12\x15\n\x06job_id\x18\x01 \x01(\tR\x05jobId\x12)\n\x06status\x18\x02 \x01(\x0e\x32\x11.rag.v1.JobStatusR\x06status\"[\n\x10GetStatusRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x15\n\x06job_id\x18\x02 \x01(\tR\x05jobId\"\x8a\x01\n\x11GetStatusResponse\x12\x15\n\x06job_id\x18\x01 \x01(\tR\x05jobId\x12)\n\x06status\x18\x02 \x01(\x0e\x32\x11.rag.v1.JobStatusR\x06status\x12\x14\n\x05stage\x18\x03 \x01(\tR\x05stage\x12\x1d\n\nerror_code\x18\x04 \x01(\tR\terrorCode\"X\n\rCancelRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x15\n\x06job_id\x18\x02 \x01(\tR\x05jobId\"R\n\x0e\x43\x61ncelResponse\x12\x15\n\x06job_id\x18\x01 \x01(\tR\x05jobId\x12)\n\x06status\x18\x02 \x01(\x0e\x32\x11.rag.v1.JobStatusR\x06status*\x9d\x01\n\tJobStatus\x12\x1a\n\x16JOB_STATUS_UNSPECIFIED\x10\x00\x12\x16\n\x12JOB_STATUS_PENDING\x10\x01\x12\x16\n\x12JOB_STATUS_RUNNING\x10\x02\x12\x13\n\x0fJOB_STATUS_DONE\x10\x03\x12\x15\n\x11JOB_STATUS_FAILED\x10\x04\x12\x18\n\x14JOB_STATUS_CANCELLED\x10\x05\x32\xcd\x01\n\nRagService\x12\x43\n\nUnderstand\x12\x19.rag.v1.UnderstandRequest\x1a\x1a.rag.v1.UnderstandResponse\x12\x39\n\x06Search\x12\x15.rag.v1.SearchRequest\x1a\x16.rag.v1.SearchResponse0\x01\x12?\n\x08Generate\x12\x17.rag.v1.GenerateRequest\x1a\x18.rag.v1.GenerateResponse0\x01\x32\xc3\x01\n\rIngestService\x12\x37\n\x06Submit\x12\x15.rag.v1.SubmitRequest\x1a\x16.rag.v1.SubmitResponse\x12@\n\tGetStatus\x12\x18.rag.v1.GetStatusRequest\x1a\x19.rag.v1.GetStatusResponse\x12\x37\n\x06\x43\x61ncel\x12\x15.rag.v1.CancelRequest\x1a\x16.rag.v1.CancelResponseB=Z;github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1;ragv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10rag/v1/rag.proto\x12\x06rag.v1\"\x85\x04\n\x0eRequestContext\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12\x1b\n\ttenant_id\x18\x02 \x01(\tR\x08tenantId\x12\x17\n\x07user_id\x18\x03 \x01(\tR\x06userId\x12(\n\x10\x61llowed_shop_ids\x18\x04 \x03(\tR\x0e\x61llowedShopIds\x12\x1b\n\tall_shops\x18\x05 \x01(\x08R\x08\x61llShops\x12/\n\x13permission_revision\x18\x06 \x01(\tR\x12permissionRevision\x12\x17\n\x07shop_id\x18\x07 \x01(\tR\x06shopId\x12\x12\n\x04role\x18\x08 \x01(\tR\x04role\x12\x30\n\x14\x61llowed_document_ids\x18\t \x03(\tR\x12\x61llowedDocumentIds\x12\x34\n\x16\x65nforce_document_scope\x18\n \x01(\x08R\x14\x65nforceDocumentScope\x12\'\n\x0fscope_signature\x18\x0b \x01(\tR\x0escopeSignature\x12(\n\x10scope_expires_at\x18\x0c \x01(\x03R\x0escopeExpiresAt\x12 \n\x0ctenant_db_id\x18\r \x01(\x03R\ntenantDbId\x12\x1c\n\nuser_db_id\x18\x0e \x01(\x03R\x08userDbId\"\x8c\x03\n\x08\x45vidence\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n\x07\x63ontent\x18\x02 \x01(\tR\x07\x63ontent\x12\x1f\n\x0bsource_type\x18\x03 \x01(\tR\nsourceType\x12\x1d\n\nsource_ref\x18\x04 \x01(\tR\tsourceRef\x12\x1f\n\x0b\x64ocument_id\x18\x05 \x01(\tR\ndocumentId\x12\x1d\n\nversion_id\x18\x06 \x01(\tR\tversionId\x12\x17\n\x07page_no\x18\x07 \x01(\x05R\x06pageNo\x12\x12\n\x04rank\x18\x08 \x01(\x05R\x04rank\x12\x1b\n\traw_score\x18\t \x01(\x01R\x08rawScore\x12\x17\n\x07shop_id\x18\n \x01(\tR\x06shopId\x12)\n\x10\x64isclosure_class\x18\x0b \x01(\tR\x0f\x64isclosureClass\x12+\n\x11\x63ustomer_eligible\x18\x0c \x01(\x08R\x10\x63ustomerEligible\x12\x1b\n\ttenant_id\x18\r \x01(\tR\x08tenantId\"|\n\x04\x46\x61\x63t\x12\x1b\n\ttool_name\x18\x01 \x01(\tR\x08toolName\x12\x1d\n\nvalue_json\x18\x02 \x01(\tR\tvalueJson\x12\x1f\n\x0bobserved_at\x18\x03 \x01(\tR\nobservedAt\x12\x17\n\x07is_mock\x18\x04 \x01(\x08R\x06isMock\"\x84\x01\n\x11UnderstandRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x14\n\x05query\x18\x02 \x01(\tR\x05query\x12\'\n\x0fhistory_summary\x18\x03 \x01(\tR\x0ehistorySummary\"\xc2\x02\n\x12UnderstandResponse\x12\'\n\x0frewritten_query\x18\x01 \x01(\tR\x0erewrittenQuery\x12\x16\n\x06intent\x18\x02 \x01(\tR\x06intent\x12-\n\x12information_source\x18\x03 \x01(\tR\x11informationSource\x12.\n\x13required_fact_tools\x18\x04 \x03(\tR\x11requiredFactTools\x12$\n\rclarification\x18\x05 \x01(\tR\rclarification\x12.\n\x08\x65ntities\x18\x06 \x03(\x0b\x32\x12.rag.v1.EntitySlotR\x08\x65ntities\x12\x1e\n\nconfidence\x18\x07 \x01(\x01R\nconfidence\x12\x16\n\x06reason\x18\x08 \x01(\tR\x06reason\"V\n\nEntitySlot\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value\x12\x1e\n\nconfidence\x18\x03 \x01(\x01R\nconfidence\"\xb6\x01\n\rSearchRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x14\n\x05query\x18\x02 \x01(\tR\x05query\x12\x32\n\x15\x61llow_external_search\x18\x03 \x01(\x08R\x13\x61llowExternalSearch\x12)\n\x10response_purpose\x18\x04 \x01(\tR\x0fresponsePurpose\"\xf0\x01\n\x0eSearchResponse\x12\x14\n\x05phase\x18\x01 \x01(\tR\x05phase\x12,\n\x08\x65vidence\x18\x02 \x03(\x0b\x32\x10.rag.v1.EvidenceR\x08\x65vidence\x12\x1a\n\x08\x63omplete\x18\x03 \x01(\x08R\x08\x63omplete\x12\'\n\x0f\x64\x65graded_stages\x18\x04 \x03(\tR\x0e\x64\x65gradedStages\x12\x1d\n\nrequest_id\x18\x05 \x01(\tR\trequestId\x12\x17\n\x07is_mock\x18\x06 \x01(\x08R\x06isMock\x12\x1d\n\nerror_code\x18\x07 \x01(\tR\terrorCode\"\xd6\x01\n\x0fGenerateRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x14\n\x05query\x18\x02 \x01(\tR\x05query\x12,\n\x08\x65vidence\x18\x03 \x03(\x0b\x32\x10.rag.v1.EvidenceR\x08\x65vidence\x12\"\n\x05\x66\x61\x63ts\x18\x04 \x03(\x0b\x32\x0c.rag.v1.FactR\x05\x66\x61\x63ts\x12)\n\x10response_purpose\x18\x05 \x01(\tR\x0fresponsePurpose\"\x8f\x02\n\x10GenerateResponse\x12\x1a\n\x08sequence\x18\x01 \x01(\x04R\x08sequence\x12\x16\n\x05\x64\x65lta\x18\x02 \x01(\tH\x00R\x05\x64\x65lta\x12.\n\x08\x63itation\x18\x03 \x01(\x0b\x32\x10.rag.v1.EvidenceH\x00R\x08\x63itation\x12\x1f\n\nusage_json\x18\x04 \x01(\tH\x00R\tusageJson\x12\x14\n\x04\x64one\x18\x05 \x01(\x08H\x00R\x04\x64one\x12\x1f\n\nerror_code\x18\x06 \x01(\tH\x00R\terrorCode\x12\x19\n\x07is_mock\x18\x07 \x01(\x08H\x00R\x06isMock\x12\x1b\n\x08\x63\x61n_copy\x18\x08 \x01(\x08H\x00R\x07\x63\x61nCopyB\x07\n\x05\x65vent\"\xd1\x01\n\rSubmitRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\'\n\x0fidempotency_key\x18\x02 \x01(\tR\x0eidempotencyKey\x12\x1b\n\tsource_id\x18\x03 \x01(\tR\x08sourceId\x12\x1d\n\nobject_key\x18\x04 \x01(\tR\tobjectKey\x12)\n\x10pipeline_version\x18\x05 \x01(\tR\x0fpipelineVersion\"R\n\x0eSubmitResponse\x12\x15\n\x06job_id\x18\x01 \x01(\tR\x05jobId\x12)\n\x06status\x18\x02 \x01(\x0e\x32\x11.rag.v1.JobStatusR\x06status\"[\n\x10GetStatusRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x15\n\x06job_id\x18\x02 \x01(\tR\x05jobId\"\x8a\x01\n\x11GetStatusResponse\x12\x15\n\x06job_id\x18\x01 \x01(\tR\x05jobId\x12)\n\x06status\x18\x02 \x01(\x0e\x32\x11.rag.v1.JobStatusR\x06status\x12\x14\n\x05stage\x18\x03 \x01(\tR\x05stage\x12\x1d\n\nerror_code\x18\x04 \x01(\tR\terrorCode\"X\n\rCancelRequest\x12\x30\n\x07\x63ontext\x18\x01 \x01(\x0b\x32\x16.rag.v1.RequestContextR\x07\x63ontext\x12\x15\n\x06job_id\x18\x02 \x01(\tR\x05jobId\"R\n\x0e\x43\x61ncelResponse\x12\x15\n\x06job_id\x18\x01 \x01(\tR\x05jobId\x12)\n\x06status\x18\x02 \x01(\x0e\x32\x11.rag.v1.JobStatusR\x06status*\x9d\x01\n\tJobStatus\x12\x1a\n\x16JOB_STATUS_UNSPECIFIED\x10\x00\x12\x16\n\x12JOB_STATUS_PENDING\x10\x01\x12\x16\n\x12JOB_STATUS_RUNNING\x10\x02\x12\x13\n\x0fJOB_STATUS_DONE\x10\x03\x12\x15\n\x11JOB_STATUS_FAILED\x10\x04\x12\x18\n\x14JOB_STATUS_CANCELLED\x10\x05\x32\xcd\x01\n\nRagService\x12\x43\n\nUnderstand\x12\x19.rag.v1.UnderstandRequest\x1a\x1a.rag.v1.UnderstandResponse\x12\x39\n\x06Search\x12\x15.rag.v1.SearchRequest\x1a\x16.rag.v1.SearchResponse0\x01\x12?\n\x08Generate\x12\x17.rag.v1.GenerateRequest\x1a\x18.rag.v1.GenerateResponse0\x01\x32\xc3\x01\n\rIngestService\x12\x37\n\x06Submit\x12\x15.rag.v1.SubmitRequest\x1a\x16.rag.v1.SubmitResponse\x12@\n\tGetStatus\x12\x18.rag.v1.GetStatusRequest\x1a\x19.rag.v1.GetStatusResponse\x12\x37\n\x06\x43\x61ncel\x12\x15.rag.v1.CancelRequest\x1a\x16.rag.v1.CancelResponseB=Z;github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1;ragv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,42 +32,42 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rag.v1.rag_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'Z;github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1;ragv1'
-  _globals['_JOBSTATUS']._serialized_start=2965
-  _globals['_JOBSTATUS']._serialized_end=3122
+  _globals['_JOBSTATUS']._serialized_start=3245
+  _globals['_JOBSTATUS']._serialized_end=3402
   _globals['_REQUESTCONTEXT']._serialized_start=29
-  _globals['_REQUESTCONTEXT']._serialized_end=295
-  _globals['_EVIDENCE']._serialized_start=298
-  _globals['_EVIDENCE']._serialized_end=665
-  _globals['_FACT']._serialized_start=667
-  _globals['_FACT']._serialized_end=791
-  _globals['_UNDERSTANDREQUEST']._serialized_start=794
-  _globals['_UNDERSTANDREQUEST']._serialized_end=926
-  _globals['_UNDERSTANDRESPONSE']._serialized_start=929
-  _globals['_UNDERSTANDRESPONSE']._serialized_end=1251
-  _globals['_ENTITYSLOT']._serialized_start=1253
-  _globals['_ENTITYSLOT']._serialized_end=1339
-  _globals['_SEARCHREQUEST']._serialized_start=1342
-  _globals['_SEARCHREQUEST']._serialized_end=1524
-  _globals['_SEARCHRESPONSE']._serialized_start=1527
-  _globals['_SEARCHRESPONSE']._serialized_end=1767
-  _globals['_GENERATEREQUEST']._serialized_start=1770
-  _globals['_GENERATEREQUEST']._serialized_end=1984
-  _globals['_GENERATERESPONSE']._serialized_start=1987
-  _globals['_GENERATERESPONSE']._serialized_end=2258
-  _globals['_SUBMITREQUEST']._serialized_start=2261
-  _globals['_SUBMITREQUEST']._serialized_end=2470
-  _globals['_SUBMITRESPONSE']._serialized_start=2472
-  _globals['_SUBMITRESPONSE']._serialized_end=2554
-  _globals['_GETSTATUSREQUEST']._serialized_start=2556
-  _globals['_GETSTATUSREQUEST']._serialized_end=2647
-  _globals['_GETSTATUSRESPONSE']._serialized_start=2650
-  _globals['_GETSTATUSRESPONSE']._serialized_end=2788
-  _globals['_CANCELREQUEST']._serialized_start=2790
-  _globals['_CANCELREQUEST']._serialized_end=2878
-  _globals['_CANCELRESPONSE']._serialized_start=2880
-  _globals['_CANCELRESPONSE']._serialized_end=2962
-  _globals['_RAGSERVICE']._serialized_start=3125
-  _globals['_RAGSERVICE']._serialized_end=3330
-  _globals['_INGESTSERVICE']._serialized_start=3333
-  _globals['_INGESTSERVICE']._serialized_end=3528
+  _globals['_REQUESTCONTEXT']._serialized_end=546
+  _globals['_EVIDENCE']._serialized_start=549
+  _globals['_EVIDENCE']._serialized_end=945
+  _globals['_FACT']._serialized_start=947
+  _globals['_FACT']._serialized_end=1071
+  _globals['_UNDERSTANDREQUEST']._serialized_start=1074
+  _globals['_UNDERSTANDREQUEST']._serialized_end=1206
+  _globals['_UNDERSTANDRESPONSE']._serialized_start=1209
+  _globals['_UNDERSTANDRESPONSE']._serialized_end=1531
+  _globals['_ENTITYSLOT']._serialized_start=1533
+  _globals['_ENTITYSLOT']._serialized_end=1619
+  _globals['_SEARCHREQUEST']._serialized_start=1622
+  _globals['_SEARCHREQUEST']._serialized_end=1804
+  _globals['_SEARCHRESPONSE']._serialized_start=1807
+  _globals['_SEARCHRESPONSE']._serialized_end=2047
+  _globals['_GENERATEREQUEST']._serialized_start=2050
+  _globals['_GENERATEREQUEST']._serialized_end=2264
+  _globals['_GENERATERESPONSE']._serialized_start=2267
+  _globals['_GENERATERESPONSE']._serialized_end=2538
+  _globals['_SUBMITREQUEST']._serialized_start=2541
+  _globals['_SUBMITREQUEST']._serialized_end=2750
+  _globals['_SUBMITRESPONSE']._serialized_start=2752
+  _globals['_SUBMITRESPONSE']._serialized_end=2834
+  _globals['_GETSTATUSREQUEST']._serialized_start=2836
+  _globals['_GETSTATUSREQUEST']._serialized_end=2927
+  _globals['_GETSTATUSRESPONSE']._serialized_start=2930
+  _globals['_GETSTATUSRESPONSE']._serialized_end=3068
+  _globals['_CANCELREQUEST']._serialized_start=3070
+  _globals['_CANCELREQUEST']._serialized_end=3158
+  _globals['_CANCELRESPONSE']._serialized_start=3160
+  _globals['_CANCELRESPONSE']._serialized_end=3242
+  _globals['_RAGSERVICE']._serialized_start=3405
+  _globals['_RAGSERVICE']._serialized_end=3610
+  _globals['_INGESTSERVICE']._serialized_start=3613
+  _globals['_INGESTSERVICE']._serialized_end=3808
 # @@protoc_insertion_point(module_scope)

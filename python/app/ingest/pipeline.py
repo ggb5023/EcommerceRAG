@@ -116,9 +116,16 @@ class CSVParser:
         with path.open("r", encoding="utf-8", newline="") as handle:
             for row_number, row in enumerate(csv.DictReader(handle), 2):
                 values = [f"{key}: {value}" for key, value in row.items() if value not in (None, "")]
-                row_metadata = dict(metadata)
                 row_tenant = row.get("tenant_id")
                 row_shop = row.get("shop_id")
+                # A manifest document may point at a shared CSV (for example
+                # the synthetic products file). Do not let rows belonging to
+                # another tenant or shop inherit this document's identity.
+                if row_tenant and row_tenant != metadata.get("tenant_id"):
+                    continue
+                if row_shop and row_shop != metadata.get("shop_id"):
+                    continue
+                row_metadata = dict(metadata)
                 if row_tenant:
                     row_metadata["tenant_id"] = row_tenant
                 if row_shop:
@@ -242,24 +249,37 @@ class LocalIndex:
 
     def search(self, query: str, *, tenant_id: str, shop_id: str | None = None,
                allowed_shop_ids: set[str] = frozenset(), role: str = "viewer",
-               business_date: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
+               business_date: str | None = None, limit: int = 5,
+               allowed_document_ids: set[str] | None = None,
+               adjacent_window: int = 0) -> list[dict[str, Any]]:
+        if adjacent_window not in (0, 1) or not 1 <= limit <= 5:
+            raise ValueError("search supports 1-5 hits and at most one adjacent chunk per side")
+        if not tenant_id or not allowed_shop_ids or (shop_id and shop_id not in allowed_shop_ids):
+            return []
         q = self._tokens(query)
         today = date.fromisoformat(business_date) if business_date else None
         results: list[tuple[float, Chunk]] = []
-        for chunk in self.chunks:
+        def permitted(chunk: Chunk) -> bool:
+            if allowed_document_ids is not None and chunk.document_id not in allowed_document_ids:
+                return False
             if chunk.tenant_id != tenant_id or (shop_id and chunk.shop_id != shop_id):
-                continue
+                return False
             if self._active_versions.get((chunk.tenant_id, chunk.document_id)) != chunk.version_id:
-                continue
-            if not shop_id and chunk.shop_id not in allowed_shop_ids:
-                continue
+                return False
+            if chunk.shop_id not in allowed_shop_ids:
+                return False
             if chunk.disclosure_class != "external_allowed" and role not in {"admin", "owner"}:
-                continue
+                return False
             if today:
                 start = date.fromisoformat(chunk.effective_from) if chunk.effective_from else None
                 end = date.fromisoformat(chunk.effective_to) if chunk.effective_to else None
                 if (start and today < start) or (end and today >= end):
-                    continue
+                    return False
+            return True
+
+        for chunk in self.chunks:
+            if not permitted(chunk):
+                continue
             searchable = chunk.content + " " + " ".join(chunk.heading)
             if chunk.metadata.get("fact_type"):
                 fact_type = str(chunk.metadata["fact_type"])
@@ -268,11 +288,25 @@ class LocalIndex:
             if overlap:
                 results.append((overlap / max(len(q), 1), chunk))
         results.sort(key=lambda item: (-item[0], item[1].chunk_id))
+        expanded: list[tuple[float, Chunk]] = []
+        seen: set[str] = set()
+        for score, hit in results[:limit]:
+            candidates = [hit]
+            if adjacent_window:
+                candidates += sorted((c for c in self.chunks
+                                      if (c.tenant_id, c.shop_id, c.document_id, c.version_id, c.section_seq)
+                                      == (hit.tenant_id, hit.shop_id, hit.document_id, hit.version_id, hit.section_seq)
+                                      and abs(c.chunk_index - hit.chunk_index) == 1 and permitted(c)),
+                                     key=lambda c: c.chunk_index)
+            for chunk in candidates:
+                if chunk.chunk_id not in seen:
+                    seen.add(chunk.chunk_id)
+                    expanded.append((score, chunk))
         return [{"document_id": chunk.document_id, "version_id": chunk.version_id, "chunk_id": chunk.chunk_id,
                  "source_ref": chunk.source_ref, "content": chunk.content, "score": score, "rank": rank,
                  "citation_index": rank, "disclosure_class": chunk.disclosure_class, "is_mock": True,
                  "tenant_id": chunk.tenant_id, "shop_id": chunk.shop_id, "metadata": chunk.metadata}
-                for rank, (score, chunk) in enumerate(results[:limit], 1)]
+                for rank, (score, chunk) in enumerate(expanded, 1)]
 
 
 def load_manifest_index(manifest_path: Path, *, version_id: str | None = None) -> LocalIndex:

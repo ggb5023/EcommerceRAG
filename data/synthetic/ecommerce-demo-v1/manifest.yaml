@@ -35,10 +35,32 @@ documents:
     effective_to: null
     source_type: synthetic
     sha256: 806c6510079cdf8fb515caee449d334afd48e66ceed31fe4ba99f25ea7c233a8
+  - document_id: syn-products-west
+    path: products-west.csv
+    format: csv
+    doc_type: product
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-west
+    disclosure_class: external_allowed
+    effective_from: 2026-01-01
+    effective_to: null
+    source_type: synthetic
+    sha256: 24b49a7fe7f7599f752aab189948ee6886d2d54874eaeb5f9929dcc4b4ba2688
   - document_id: syn-policy-a
     path: policies.md
     format: markdown
     doc_type: policy
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-east
+    disclosure_class: external_allowed
+    effective_from: 2026-01-01
+    effective_to: null
+    source_type: synthetic
+    sha256: 14d8ee3a644ae7d3a03b6554d948e24bbb74095fb97caf32d8043a76a42e9cfc
+  - document_id: syn-restricted-a
+    path: policies.md
+    format: markdown
+    doc_type: policy_acl_fixture
     tenant_id: demo-tenant-a
     shop_id: demo-shop-east
     disclosure_class: external_allowed

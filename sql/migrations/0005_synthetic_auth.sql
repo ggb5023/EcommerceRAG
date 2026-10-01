@@ -17,4 +17,7 @@ CREATE TABLE IF NOT EXISTS permission_revision (
 CREATE INDEX IF NOT EXISTS idx_app_user_active_scope
     ON app_user (tenant_id, external_id) WHERE revoked_at IS NULL;
 
+INSERT INTO schema_migration(version, checksum_sha256)
+VALUES ('0005', :'migration_checksum') ON CONFLICT (version) DO NOTHING;
+
 COMMIT;

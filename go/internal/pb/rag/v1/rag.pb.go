@@ -90,8 +90,15 @@ type RequestContext struct {
 	PermissionRevision string                 `protobuf:"bytes,6,opt,name=permission_revision,json=permissionRevision,proto3" json:"permission_revision,omitempty"`
 	ShopId             string                 `protobuf:"bytes,7,opt,name=shop_id,json=shopId,proto3" json:"shop_id,omitempty"`
 	Role               string                 `protobuf:"bytes,8,opt,name=role,proto3" json:"role,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Signed finite scope issued by Go. An empty document list grants nothing.
+	AllowedDocumentIds   []string `protobuf:"bytes,9,rep,name=allowed_document_ids,json=allowedDocumentIds,proto3" json:"allowed_document_ids,omitempty"`
+	EnforceDocumentScope bool     `protobuf:"varint,10,opt,name=enforce_document_scope,json=enforceDocumentScope,proto3" json:"enforce_document_scope,omitempty"`
+	ScopeSignature       string   `protobuf:"bytes,11,opt,name=scope_signature,json=scopeSignature,proto3" json:"scope_signature,omitempty"`
+	ScopeExpiresAt       int64    `protobuf:"varint,12,opt,name=scope_expires_at,json=scopeExpiresAt,proto3" json:"scope_expires_at,omitempty"`
+	TenantDbId           int64    `protobuf:"varint,13,opt,name=tenant_db_id,json=tenantDbId,proto3" json:"tenant_db_id,omitempty"`
+	UserDbId             int64    `protobuf:"varint,14,opt,name=user_db_id,json=userDbId,proto3" json:"user_db_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *RequestContext) Reset() {
@@ -180,6 +187,48 @@ func (x *RequestContext) GetRole() string {
 	return ""
 }
 
+func (x *RequestContext) GetAllowedDocumentIds() []string {
+	if x != nil {
+		return x.AllowedDocumentIds
+	}
+	return nil
+}
+
+func (x *RequestContext) GetEnforceDocumentScope() bool {
+	if x != nil {
+		return x.EnforceDocumentScope
+	}
+	return false
+}
+
+func (x *RequestContext) GetScopeSignature() string {
+	if x != nil {
+		return x.ScopeSignature
+	}
+	return ""
+}
+
+func (x *RequestContext) GetScopeExpiresAt() int64 {
+	if x != nil {
+		return x.ScopeExpiresAt
+	}
+	return 0
+}
+
+func (x *RequestContext) GetTenantDbId() int64 {
+	if x != nil {
+		return x.TenantDbId
+	}
+	return 0
+}
+
+func (x *RequestContext) GetUserDbId() int64 {
+	if x != nil {
+		return x.UserDbId
+	}
+	return 0
+}
+
 type Evidence struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -194,6 +243,7 @@ type Evidence struct {
 	ShopId           string                 `protobuf:"bytes,10,opt,name=shop_id,json=shopId,proto3" json:"shop_id,omitempty"`
 	DisclosureClass  string                 `protobuf:"bytes,11,opt,name=disclosure_class,json=disclosureClass,proto3" json:"disclosure_class,omitempty"`
 	CustomerEligible bool                   `protobuf:"varint,12,opt,name=customer_eligible,json=customerEligible,proto3" json:"customer_eligible,omitempty"`
+	TenantId         string                 `protobuf:"bytes,13,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -310,6 +360,13 @@ func (x *Evidence) GetCustomerEligible() bool {
 		return x.CustomerEligible
 	}
 	return false
+}
+
+func (x *Evidence) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
 }
 
 type Fact struct {
@@ -1362,7 +1419,7 @@ var File_rag_v1_rag_proto protoreflect.FileDescriptor
 
 const file_rag_v1_rag_proto_rawDesc = "" +
 	"\n" +
-	"\x10rag/v1/rag.proto\x12\x06rag.v1\"\x8a\x02\n" +
+	"\x10rag/v1/rag.proto\x12\x06rag.v1\"\x85\x04\n" +
 	"\x0eRequestContext\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1b\n" +
@@ -1372,7 +1429,16 @@ const file_rag_v1_rag_proto_rawDesc = "" +
 	"\tall_shops\x18\x05 \x01(\bR\ballShops\x12/\n" +
 	"\x13permission_revision\x18\x06 \x01(\tR\x12permissionRevision\x12\x17\n" +
 	"\ashop_id\x18\a \x01(\tR\x06shopId\x12\x12\n" +
-	"\x04role\x18\b \x01(\tR\x04role\"\xef\x02\n" +
+	"\x04role\x18\b \x01(\tR\x04role\x120\n" +
+	"\x14allowed_document_ids\x18\t \x03(\tR\x12allowedDocumentIds\x124\n" +
+	"\x16enforce_document_scope\x18\n" +
+	" \x01(\bR\x14enforceDocumentScope\x12'\n" +
+	"\x0fscope_signature\x18\v \x01(\tR\x0escopeSignature\x12(\n" +
+	"\x10scope_expires_at\x18\f \x01(\x03R\x0escopeExpiresAt\x12 \n" +
+	"\ftenant_db_id\x18\r \x01(\x03R\n" +
+	"tenantDbId\x12\x1c\n" +
+	"\n" +
+	"user_db_id\x18\x0e \x01(\x03R\buserDbId\"\x8c\x03\n" +
 	"\bEvidence\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x1f\n" +
@@ -1390,7 +1456,8 @@ const file_rag_v1_rag_proto_rawDesc = "" +
 	"\ashop_id\x18\n" +
 	" \x01(\tR\x06shopId\x12)\n" +
 	"\x10disclosure_class\x18\v \x01(\tR\x0fdisclosureClass\x12+\n" +
-	"\x11customer_eligible\x18\f \x01(\bR\x10customerEligible\"|\n" +
+	"\x11customer_eligible\x18\f \x01(\bR\x10customerEligible\x12\x1b\n" +
+	"\ttenant_id\x18\r \x01(\tR\btenantId\"|\n" +
 	"\x04Fact\x12\x1b\n" +
 	"\ttool_name\x18\x01 \x01(\tR\btoolName\x12\x1d\n" +
 	"\n" +

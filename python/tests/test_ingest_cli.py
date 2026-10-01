@@ -4,10 +4,11 @@ import json
 import shutil
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from app.ingest.cli import import_dataset, validate_manifest
-from app.ingest.pipeline import load_manifest_index
+from app.ingest.pipeline import LocalIndex, load_manifest_index
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "data/synthetic/ecommerce-demo-v1"
@@ -28,7 +29,7 @@ class IngestValidationTests(unittest.TestCase):
     def test_clean_manifest_passes(self):
         result = validate_manifest(self.manifest())
         self.assertTrue(result.ok, result.errors)
-        self.assertEqual(len(result.files), 7)
+        self.assertEqual(len(result.files), 9)
         self.assertTrue(result.manifest_sha256)
         self.assertTrue(result.dataset_sha256)
 
@@ -117,6 +118,19 @@ class IngestValidationTests(unittest.TestCase):
         self.assertTrue(other)
         self.assertTrue(all("demo-tenant-a" not in item["content"] for item in other))
 
+    def test_selected_shop_must_also_be_in_authorized_shop_scope(self):
+        source = load_manifest_index(self.manifest()).chunks[0]
+        west = replace(source, shop_id="demo-shop-west", chunk_id="west-only")
+        index = LocalIndex([source, west])
+        denied = index.search(source.content, tenant_id=source.tenant_id, shop_id="demo-shop-west",
+                              allowed_shop_ids={"demo-shop-east"})
+        self.assertEqual(denied, [])
+        scoped = index.search(source.content, tenant_id=source.tenant_id,
+                              allowed_shop_ids={"demo-shop-east"})
+        self.assertEqual({item["shop_id"] for item in scoped}, {"demo-shop-east"})
+        self.assertEqual(index.search(source.content, tenant_id=source.tenant_id,
+                                      allowed_shop_ids=set()), [])
+
     def test_effective_date_and_disclosure_filter(self):
         index = load_manifest_index(self.manifest())
         self.assertEqual(index.search("库存", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"}, business_date="2026-10-01"), [])
@@ -143,7 +157,8 @@ class IngestValidationTests(unittest.TestCase):
         self.assertTrue(all(item["version_id"] == "version-old" for item in result))
         old.activate("demo-tenant-a", "syn-policy-a", "version-new")
         result = old.search("配送 退货", tenant_id="demo-tenant-a", allowed_shop_ids={"demo-shop-east"})
-        self.assertTrue(all(item["version_id"] == "version-new" for item in result))
+        self.assertTrue(any(item["document_id"] == "syn-policy-a" for item in result))
+        self.assertTrue(all(item["version_id"] == "version-new" for item in result if item["document_id"] == "syn-policy-a"))
 
     def test_evidence_has_traceable_citation_fields(self):
         index = load_manifest_index(self.manifest())

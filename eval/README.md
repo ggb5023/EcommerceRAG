@@ -57,6 +57,11 @@ stable local run ID, and a fixture hash when supplied; the timestamp is run
 metadata and is not used as an evaluation value. `expected_evidence_rate`
 means only that cases declare expected documents; it is not runtime evidence
 coverage. Source type/version drift is reported as input integrity failure.
+The optional document-ID fixture measures document presence only: this tool
+does not execute Search or Generate, so those values are not query retrieval
+recall or runtime answer quality. The current demo corpus uses different IDs
+and tenant/shop mappings from the immutable 60-case set. An evaluation-aligned
+corpus and an actual authorized retrieval runner are the next development step.
 Authorization fields are checked for tenant, shop, and role completeness;
 unauthorized cases must retain a target evidence/document reference. The
 synthetic set models an unauthorized request with a normal operator context,

@@ -76,8 +76,8 @@ for filename in "${migration_files[@]}"; do
   fi
   if [[ "$applied" != t ]]; then
     echo "Applying $version to $db_name"
-    if [[ "$version" == 0004 ]]; then
-      checksum=$(sha256sum "$migration" | awk '{print $1}')
+    checksum=$(sha256sum "$migration" | awk '{print $1}')
+    if [[ "$has_checksum_column" == t || "$version" == 0004 ]]; then
       psql "$M1_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -v migration_checksum="$checksum" -f "$migration"
       has_checksum_column=t
     else
@@ -94,6 +94,7 @@ if [[ "$has_checksum_column" == t ]]; then
 fi
 
 psql "$M1_APP_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$repo/tests/m1-schema-smoke.sql"
+psql "$M1_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$repo/tests/m1-auth-constraints.sql"
 if [[ "$legacy_unverified" == 1 ]]; then
   echo "LEGACY_UNVERIFIED M1 isolated migrations and application-role schema smoke ($db_name)"
 else

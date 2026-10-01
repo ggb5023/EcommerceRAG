@@ -12,6 +12,13 @@ message RequestContext {
   string permission_revision = 6;
   string shop_id = 7;
   string role = 8;
+  // Signed finite scope issued by Go. An empty document list grants nothing.
+  repeated string allowed_document_ids = 9;
+  bool enforce_document_scope = 10;
+  string scope_signature = 11;
+  int64 scope_expires_at = 12;
+  int64 tenant_db_id = 13;
+  int64 user_db_id = 14;
 }
 message Evidence {
   string id = 1;
@@ -26,6 +33,7 @@ message Evidence {
   string shop_id = 10;
   string disclosure_class = 11;
   bool customer_eligible = 12;
+  string tenant_id = 13;
 }
 message Fact {
   string tool_name = 1;

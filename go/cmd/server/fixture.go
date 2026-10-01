@@ -163,6 +163,9 @@ func (g *gateway) importM1Fixture(ctx context.Context) (markdownFixture, bool, e
 }
 
 func (g *gateway) importFixtureRoute(w http.ResponseWriter, r *http.Request) {
+	if !g.requireWriteRole(w) {
+		return
+	}
 	fixture, imported, err := g.importM1Fixture(r.Context())
 	if err != nil {
 		writeError(w, http.StatusConflict, "fixture_import_failed", "fixture import failed")
@@ -172,4 +175,15 @@ func (g *gateway) importFixtureRoute(w http.ResponseWriter, r *http.Request) {
 		"document_id": fixture.documentID, "version_id": fixture.versionID,
 		"source_ref": "fixture://m1/shipping", "imported": imported, "is_mock": true,
 	})
+}
+
+// These compiled fixture IDs are trusted registrations, never manifest grants.
+func (g *gateway) registerM1Resources(ctx context.Context) error {
+	_, err := g.db.Exec(ctx, `INSERT INTO document(tenant_id,source_id,logical_key,title,doc_type,meta_json)
+        SELECT d.tenant_id,d.source_id,ids.logical_key,'M1 compiled fixture','markdown_fixture',
+            '{"disclosure_class":"external_allowed","shop_id":"shop-demo"}'::jsonb
+        FROM document d CROSS JOIN (VALUES ('m1-demo-bottle'),('m1-demo-care'),('m1-demo-storage'),('m1-demo-unanswerable')) ids(logical_key)
+        WHERE d.tenant_id=$1 AND d.logical_key='m1-demo-shipping'
+        ON CONFLICT(tenant_id,logical_key) DO NOTHING`, g.session.tenantID)
+	return err
 }

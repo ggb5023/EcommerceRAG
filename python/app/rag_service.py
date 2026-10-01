@@ -15,6 +15,7 @@ from typing import Any
 
 import grpc
 
+from app.authorization import ScopeError, validate_scope
 from app.ingest.pipeline import load_manifest_index
 from rag.v1 import rag_pb2, rag_pb2_grpc
 
@@ -93,26 +94,61 @@ def _fixture_matches(query: str) -> list[dict[str, str]]:
     return []
 
 
-def _allowed(ctx: Any, fixture: dict[str, str]) -> bool:
+def _valid_scope(ctx: Any) -> bool:
     shops = set(ctx.allowed_shop_ids)
-    if not ctx.tenant_id or not ctx.user_id or not ctx.permission_revision:
+    if not ctx.request_id or not ctx.tenant_id or not ctx.user_id or not ctx.permission_revision or not ctx.enforce_document_scope:
         return False
-    if fixture["tenant_id"] != ctx.tenant_id:
+    if not shops or ctx.role not in {"owner", "admin", "operator", "viewer"}:
         return False
-    if ctx.shop_id and fixture["shop_id"] != ctx.shop_id:
+    if ctx.shop_id and ctx.shop_id not in shops:
         return False
     if ctx.all_shops:
-        return bool(ctx.role in {"owner", "admin"} and shops)
-    return bool(shops and fixture["shop_id"] in shops)
+        return ctx.role in {"owner", "admin"}
+    return True
+
+
+def _allowed(ctx: Any, fixture: dict[str, str]) -> bool:
+    if not _valid_scope(ctx) or fixture["tenant_id"] != ctx.tenant_id:
+        return False
+    if fixture["shop_id"] not in set(ctx.allowed_shop_ids):
+        return False
+    if fixture.get("document_id") not in set(ctx.allowed_document_ids):
+        return False
+    return not ctx.shop_id or fixture["shop_id"] == ctx.shop_id
 
 
 class RagService(rag_pb2_grpc.RagServiceServicer):
     """M1 deterministic service; Go remains the authorization authority."""
 
+    def __init__(self, scope_validator=None):
+        self._scope_validator = scope_validator or validate_scope
+
+    def _authorize(self, scope, context):
+        if not _valid_scope(scope):
+            context.abort(grpc.StatusCode.PERMISSION_DENIED, "authorization scope is invalid")
+        try:
+            self._scope_validator(scope)
+        except ScopeError as error:
+            context.abort(error.code, "authorization scope could not be verified")
+
+    def _canonical(self, item):
+        if _LOCAL_INDEX is not None:
+            return any(c.tenant_id == item.tenant_id and c.shop_id == item.shop_id
+                       and c.document_id == item.document_id and c.version_id == item.version_id
+                       and c.chunk_id == item.id and c.content == item.content
+                       and c.source_ref == item.source_ref
+                       and c.disclosure_class == item.disclosure_class
+                       and _LOCAL_INDEX._active_versions.get((c.tenant_id, c.document_id)) == c.version_id
+                       for c in _LOCAL_INDEX.chunks)
+        return any(f["tenant_id"] == item.tenant_id and f["shop_id"] == item.shop_id
+                   and f["document_id"] == item.document_id and f["version_id"] == item.version_id
+                   and f["id"] == item.id and f["content"] == item.content
+                   and f["source_ref"] == item.source_ref and f["disclosure_class"] == item.disclosure_class
+                   for f in FIXTURES)
+
     def Understand(self, request, context):
         query = request.query.strip()
-        if not request.context.tenant_id:
-            context.abort(grpc.StatusCode.PERMISSION_DENIED, "tenant context is required")
+        self._authorize(request.context, context)
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
         if _is_vague(query) or len(query) <= 2:
@@ -140,8 +176,7 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
         )
 
     def Search(self, request, context):
-        if not request.context.tenant_id:
-            context.abort(grpc.StatusCode.PERMISSION_DENIED, "tenant context is required")
+        self._authorize(request.context, context)
         query = request.query.strip()
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
@@ -149,26 +184,33 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
             matches = _LOCAL_INDEX.search(query, tenant_id=request.context.tenant_id,
                                           shop_id=request.context.shop_id or None,
                                           allowed_shop_ids=set(request.context.allowed_shop_ids),
-                                          role=request.context.role)
+                                          role=request.context.role,
+                                          allowed_document_ids=set(request.context.allowed_document_ids),
+                                          adjacent_window=1)
             for index, item in enumerate(matches, 1):
+                self._authorize(request.context, context)
                 yield rag_pb2.SearchResponse(
                     phase="retrieval", complete=False,
                     evidence=[rag_pb2.Evidence(
                         id=item["chunk_id"], content=item["content"], source_type="local_synthetic",
+                        tenant_id=item["tenant_id"],
                         source_ref=item["source_ref"], document_id=item["document_id"],
                         version_id=item["version_id"], rank=index, raw_score=item["score"],
                         shop_id=item["shop_id"], disclosure_class=item["disclosure_class"],
                         customer_eligible=item["disclosure_class"] == "external_allowed",
                     )], request_id=request.context.request_id, is_mock=True)
+            self._authorize(request.context, context)
             yield rag_pb2.SearchResponse(phase="complete", complete=True,
                                          request_id=request.context.request_id, is_mock=True)
             return
         matches = [f for f in _fixture_matches(query) if _allowed(request.context, f)]
         for index, fixture in enumerate(matches, 1):
+            self._authorize(request.context, context)
             yield rag_pb2.SearchResponse(
                 phase="retrieval", complete=False,
                 evidence=[rag_pb2.Evidence(
                     id=fixture["id"], content=fixture["content"], source_type=fixture["source_type"],
+                    tenant_id=fixture["tenant_id"],
                     source_ref=fixture["source_ref"], document_id=fixture["document_id"],
                     version_id=fixture["version_id"], rank=index, raw_score=1.0 / index,
                     shop_id=fixture["shop_id"], disclosure_class=fixture["disclosure_class"],
@@ -178,12 +220,12 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
             )
             if not context.is_active():
                 return
+        self._authorize(request.context, context)
         yield rag_pb2.SearchResponse(phase="complete", complete=True,
                                      request_id=request.context.request_id, is_mock=True)
 
     def Generate(self, request, context):
-        if not request.context.tenant_id:
-            context.abort(grpc.StatusCode.PERMISSION_DENIED, "tenant context is required")
+        self._authorize(request.context, context)
         if hasattr(context, "is_active") and not context.is_active():
             return
         evidence = [
@@ -191,19 +233,27 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
             if item.source_type not in ("internal", "unclassified")
             and item.disclosure_class == "external_allowed"
             and item.customer_eligible
-            and _allowed(request.context, {"tenant_id": request.context.tenant_id,
-                                           "shop_id": item.shop_id})
+            and _allowed(request.context, {"tenant_id": item.tenant_id,
+                                           "shop_id": item.shop_id, "document_id": item.document_id})
         ]
+        if any(not self._canonical(item) for item in evidence):
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "evidence does not match authorized source")
         if not evidence:
             text = "暂时没有可引用的知识资料，请补充问题或联系人工客服。"
         else:
             text = "根据当前知识资料：" + "；".join(e.content for e in evidence)
+        self._authorize(request.context, context)
         yield rag_pb2.GenerateResponse(sequence=1, delta=text)
         for index, item in enumerate(evidence, 2):
+            self._authorize(request.context, context)
             yield rag_pb2.GenerateResponse(sequence=index, citation=item)
+        self._authorize(request.context, context)
         yield rag_pb2.GenerateResponse(sequence=len(evidence) + 2, usage_json='{"is_mock":true}')
+        self._authorize(request.context, context)
         yield rag_pb2.GenerateResponse(sequence=len(evidence) + 3, is_mock=True)
+        self._authorize(request.context, context)
         yield rag_pb2.GenerateResponse(sequence=len(evidence) + 4, can_copy=False)
+        self._authorize(request.context, context)
         yield rag_pb2.GenerateResponse(sequence=len(evidence) + 5, done=True)
 
 
