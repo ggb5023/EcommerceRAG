@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, type TurnEvent } from './api'
+import { isTurnActive, isTurnTerminal } from './turnState'
 
 function sseResponse(frames: string[], splitBytes = false): Response {
   const bytes = new TextEncoder().encode(frames.join(''))
@@ -106,5 +107,13 @@ describe('workspace contracts', () => {
   it('exposes the conversation route without changing the API boundary', async () => {
     const { routes } = await import('./routes')
     expect(routes.map((route) => route.path)).toEqual(['/', '/chat', '/chat/:conversation_id', '/:pathMatch(.*)*'])
+  })
+
+  it('maps active and terminal service states without inventing frontend terminals', () => {
+    expect(isTurnActive('CANCEL_REQUESTED')).toBe(true)
+    expect(isTurnActive('EXECUTING')).toBe(true)
+    expect(isTurnTerminal('ASKING')).toBe(true)
+    expect(isTurnTerminal('CANCELLED')).toBe(true)
+    expect(isTurnTerminal('GENERATING')).toBe(false)
   })
 })

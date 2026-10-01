@@ -30,6 +30,11 @@ metadata. A real evaluation run must add human verification, retrieval and
 answer metrics, usage, latency, and cost without writing secrets or customer
 content.
 
+`run_mock_retrieval.py` produces a read-only deterministic baseline summary,
+validates the input SHA-256, and reports retrieval, evidence coverage, refusal,
+unauthorized, and multi-turn classification counts. Its output is not M2
+real-service acceptance.
+
 The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer
 approval from a passing machine precheck. The synthetic set is a verified

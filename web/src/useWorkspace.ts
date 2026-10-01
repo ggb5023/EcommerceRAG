@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { api, type Conversation, type Evidence, type Session, type TurnEvent } from './api'
+import { isTurnActive } from './turnState'
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 
@@ -19,7 +20,7 @@ export function useWorkspace() {
   const loading = ref(true)
   const unavailable = ref(false)
   const error = ref('')
-  const busy = computed(() => ['PENDING', 'EXECUTING', 'CANCEL_REQUESTED'].includes(turnStatus.value))
+  const busy = computed(() => isTurnActive(turnStatus.value))
   const canCopy = computed(() => Boolean(customerReply.value?.can_copy && !activeConversation.value?.last_turn?.is_mock))
   let cancelStream: (() => void) | undefined
   let activeTurnId = ''
@@ -108,6 +109,7 @@ export function useWorkspace() {
         error.value ||= '生成失败，请重试'
       }
       if (event.status !== 'ASKING') connectionState.value = 'connected'
+      activeTurnId = ''
     }
     if (event.type === 'error') error.value = event.message ?? '生成失败'
   }
@@ -134,7 +136,7 @@ export function useWorkspace() {
       cancelStream?.()
       cancelStream = api.streamEvents(turn.id, (event) => handleEvent(current, event), () => {
         connectionState.value = 'connected'
-        activeTurnId = ''
+        if (!isTurnActive(turnStatus.value)) activeTurnId = ''
       }, (reason) => {
         connectionState.value = 'disconnected'
         error.value = reason
