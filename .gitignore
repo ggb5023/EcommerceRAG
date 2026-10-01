@@ -4,6 +4,9 @@
 !/README.md
 !eval/
 !eval/README.md
+!data/
+!data/synthetic/
+!data/synthetic/**/*.md
 docs/
 .private/
 *.bundle

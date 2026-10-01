@@ -7,6 +7,7 @@ dependencies = [
   "grpcio>=1.70,<2",
   "grpcio-health-checking>=1.70,<2",
   "grpcio-reflection>=1.70,<2",
+  "pyyaml>=6.0,<7",
 ]
 [dependency-groups]
 dev = ["grpcio-tools>=1.70,<2", "pytest>=8,<9", "ruff>=0.11,<1"]

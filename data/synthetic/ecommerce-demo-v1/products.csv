@@ -1,0 +1,13 @@
+sku,product_name,category,shop_id,tenant_id,color,specification,care,price_cents,synthetic,provisional,license
+SKU-CUP-480,晨雾保温杯,drinkware,demo-shop-east,demo-tenant-a,雾蓝,480ml;杯口6cm;304不锈钢,手洗并擦干杯盖密封圈,8900,true,true,internal-generated
+SKU-TOWEL-01,竹纤维柔软毛巾,textile,demo-shop-east,demo-tenant-a,浅灰,34x76cm;竹纤维混纺,建议低温烘干;避免漂白,2900,true,true,internal-generated
+SKU-BOX-LOW,晴野收纳箱低款,storage,demo-shop-east,demo-tenant-a,蓝色,45x30x18cm;带盖,干布擦拭;避免暴晒,6500,true,true,internal-generated
+SKU-BOX-HIGH,晴野收纳箱高款,storage,demo-shop-east,demo-tenant-a,蓝色,45x30x32cm;带盖,干布擦拭;避免暴晒,7900,true,true,internal-generated
+SKU-METER-RS12,RS-12万用表,tools,demo-shop-central,demo-tenant-b,黑色,直流电压600V;带蜂鸣档,按说明书档位操作;勿测超量程,15900,true,true,internal-generated
+SKU-BAG-20,远行旅行袋,travel,demo-shop-central,demo-tenant-b,红色,20L;可拆肩带,使用后通风晾干;不可机洗,12900,true,true,internal-generated
+SKU-LAMP-USB,星点USB台灯,lighting,demo-shop-central,demo-tenant-b,白色,5W;USB-C供电,断电后擦拭;不可浸水,9900,true,true,internal-generated
+SKU-CASE-A,轻巧收纳盒,storage,demo-shop-east,demo-tenant-a,透明,30x20x12cm;可叠放,避免重压盒盖,3500,true,true,internal-generated
+SKU-CUP-750,晨雾保温杯大容量,drinkware,demo-shop-east,demo-tenant-a,墨绿,750ml;杯口6cm;304不锈钢,手洗并擦干杯盖密封圈,10900,true,true,internal-generated
+SKU-TOWEL-02,竹纤维浴巾,textile,demo-shop-east,demo-tenant-a,米白,70x140cm;竹纤维混纺,低温烘干;避免高温,5900,true,true,internal-generated
+SKU-METER-RS12-PRO,RS-12万用表套装,tools,demo-shop-central,demo-tenant-b,黑色,直流电压600V;含表笔盒,按说明书档位操作;勿测超量程,19900,true,true,internal-generated
+SKU-BAG-30,远行旅行袋加大,travel,demo-shop-central,demo-tenant-b,深蓝,30L;可拆肩带,使用后通风晾干;不可机洗,15900,true,true,internal-generated

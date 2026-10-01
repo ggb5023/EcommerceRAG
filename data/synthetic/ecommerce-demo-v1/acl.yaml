@@ -1,0 +1,28 @@
+synthetic: true
+provisional: true
+license: internal-generated
+tenant_access:
+  - tenant_id: demo-tenant-a
+    principals:
+      - user_id: demo-agent-east
+        role: operator
+        shop_ids: [demo-shop-east]
+        revoked: false
+      - user_id: demo-admin-a
+        role: admin
+        shop_ids: [demo-shop-east, demo-shop-west]
+        revoked: false
+      - user_id: demo-agent-revoked
+        role: operator
+        shop_ids: [demo-shop-east]
+        revoked: true
+  - tenant_id: demo-tenant-b
+    principals:
+      - user_id: demo-agent-central
+        role: operator
+        shop_ids: [demo-shop-central]
+        revoked: false
+      - user_id: demo-viewer-b
+        role: viewer
+        shop_ids: [demo-shop-central]
+        revoked: false

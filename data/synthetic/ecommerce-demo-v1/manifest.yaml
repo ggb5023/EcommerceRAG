@@ -1,0 +1,86 @@
+schema_version: 1
+dataset_id: ecommerce-demo-v1
+pipeline_version: synthetic-local-v1
+synthetic: true
+provisional: true
+license: internal-generated
+tenants:
+  - tenant_id: demo-tenant-a
+    shops: [demo-shop-east, demo-shop-west]
+    principals:
+      - user_id: demo-agent-east
+        role: operator
+        shop_ids: [demo-shop-east]
+      - user_id: demo-admin-a
+        role: admin
+        shop_ids: [demo-shop-east, demo-shop-west]
+  - tenant_id: demo-tenant-b
+    shops: [demo-shop-central]
+    principals:
+      - user_id: demo-agent-central
+        role: operator
+        shop_ids: [demo-shop-central]
+      - user_id: demo-viewer-b
+        role: viewer
+        shop_ids: [demo-shop-central]
+documents:
+  - document_id: syn-products-a
+    path: products.csv
+    format: csv
+    doc_type: product
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-east
+    disclosure_class: external_allowed
+    effective_from: 2026-01-01
+    effective_to: null
+    source_type: synthetic
+  - document_id: syn-policy-a
+    path: policies.md
+    format: markdown
+    doc_type: policy
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-east
+    disclosure_class: external_allowed
+    effective_from: 2026-01-01
+    effective_to: null
+    source_type: synthetic
+  - document_id: syn-faq-a
+    path: faq.md
+    format: markdown
+    doc_type: faq
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-east
+    disclosure_class: external_allowed
+    effective_from: 2026-01-01
+    effective_to: null
+    source_type: synthetic
+  - document_id: syn-facts-a
+    path: facts.csv
+    format: csv
+    doc_type: fact_snapshot
+    tenant_id: demo-tenant-a
+    shop_id: demo-shop-east
+    disclosure_class: internal_only
+    effective_from: 2026-09-29
+    effective_to: 2026-10-01
+    source_type: synthetic
+  - document_id: syn-products-b
+    path: products.csv
+    format: csv
+    doc_type: product
+    tenant_id: demo-tenant-b
+    shop_id: demo-shop-central
+    disclosure_class: external_allowed
+    effective_from: 2026-01-01
+    effective_to: null
+    source_type: synthetic
+  - document_id: syn-policy-revoked
+    path: policies.md
+    format: markdown
+    doc_type: policy
+    tenant_id: demo-tenant-b
+    shop_id: demo-shop-central
+    disclosure_class: unclassified
+    effective_from: 2026-01-01
+    effective_to: 2026-06-01
+    source_type: synthetic

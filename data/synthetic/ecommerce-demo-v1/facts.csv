@@ -1,0 +1,7 @@
+fact_id,tenant_id,shop_id,fact_type,entity_id,value,observed_at,effective_from,effective_to,synthetic,provisional,license
+fact-stock-cup-480,demo-tenant-a,demo-shop-east,stock,SKU-CUP-480,42,2026-09-29T09:00:00+08:00,2026-09-29,2026-10-01,true,true,internal-generated
+fact-price-cup-480,demo-tenant-a,demo-shop-east,price,SKU-CUP-480,8900,2026-09-29T09:00:00+08:00,2026-09-29,2026-10-01,true,true,internal-generated
+fact-stock-box-low,demo-tenant-a,demo-shop-east,stock,SKU-BOX-LOW,0,2026-09-29T09:00:00+08:00,2026-09-29,2026-10-01,true,true,internal-generated
+fact-order-demo,demo-tenant-a,demo-shop-east,order_status,ORDER-DEMO-001,packed,2026-09-29T09:00:00+08:00,2026-09-29,2026-10-01,true,true,internal-generated
+fact-stock-meter,demo-tenant-b,demo-shop-central,stock,SKU-METER-RS12,8,2026-09-29T09:00:00+08:00,2026-09-29,2026-10-01,true,true,internal-generated
+fact-price-bag,demo-tenant-b,demo-shop-central,price,SKU-BAG-20,12900,2026-09-29T09:00:00+08:00,2026-09-29,2026-10-01,true,true,internal-generated
