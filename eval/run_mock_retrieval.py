@@ -241,7 +241,10 @@ def main() -> int:
         "notes": ["Local deterministic fixture classification only; no model, network, or customer data."],
     }
     if args.include_cases:
-        result["case_results"] = case_results(cases, fixture_doc_ids)
+        per_case = case_results(cases, fixture_doc_ids)
+        result["case_results"] = per_case
+        result["case_status_counts"] = dict(sorted(collections.Counter(row["status"] for row in per_case).items()))
+        result["failed_case_ids"] = [row["case_id"] for row in per_case if row["status"] == "FAIL"]
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.output:
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

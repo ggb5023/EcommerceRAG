@@ -97,6 +97,17 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["hit_doc_count"], 1)
 
+    def test_case_status_summary_contains_only_case_ids_for_failures(self):
+        cases = [
+            {"case_id": "ok", "tags": ["product_knowledge"], "expected_doc_ids": ["d1"]},
+            {"case_id": "bad", "tags": ["product_knowledge"], "expected_doc_ids": ["d2"]},
+        ]
+        rows = MODULE.case_results(cases, {"d1"})
+        counts = __import__("collections").Counter(row["status"] for row in rows)
+        failed = [row["case_id"] for row in rows if row["status"] == "FAIL"]
+        self.assertEqual(counts, {"PASS": 1, "FAIL": 1})
+        self.assertEqual(failed, ["bad"])
+
 
 if __name__ == "__main__":
     unittest.main()
