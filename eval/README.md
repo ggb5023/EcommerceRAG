@@ -1,10 +1,12 @@
 # M2 Evaluation Sources
 
 This directory contains versioned evaluation definitions, not customer data or
-credentials. The first set uses `ESCI-lite` for product retrieval and a
-deterministic synthetic tenant set for policy, FAQ, factual mock, and access
-control scenarios. Amazon data and live web snapshots are out of scope for the
-first set.
+credentials. The first 60-case set uses a deterministic synthetic tenant set
+for policy, FAQ, factual mock, and access-control scenarios. Public data sources
+for a separate product retrieval track are listed in
+`public-data-sources.manifest.json`: Amazon Science ESCI and the
+`McAuley-Lab/Amazon-Reviews-2023` dataset distributed through Hugging Face.
+They are not part of the 60-case business-policy truth set.
 
 The authoritative source and responsibility matrix is in
 `.local/dev-docs/docs/数据来源与评测输入.md`. Codex owns synthetic dataset
@@ -28,9 +30,12 @@ status counts, missing notes, duplicate IDs, evidence drift, and either
 `PENDING_REVIEW` or `VERIFIED_BASELINE`.
 
 The generated set is a development fixture and cannot be used to claim M2
-real-service acceptance. `esci-lite.manifest.json` locks the intended public
-source metadata only; no ESCI raw data is downloaded or committed in this
-stage.
+real-service acceptance. `esci-lite.manifest.json` remains the compatibility
+manifest for the ESCI-lite subset. `public-data-sources.manifest.json` records
+the broader Amazon/Hugging Face source decisions. No public raw data is
+downloaded or committed until its revision, terms/license, and SHA-256 are
+recorded. Hugging Face is a distribution channel; its dataset card and the
+original source terms control use.
 
 Each case includes a query, expected document IDs, answer points, intent,
 information source, tags, authorization context, business date, and source

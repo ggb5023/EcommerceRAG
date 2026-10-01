@@ -1,0 +1,39 @@
+{
+  "manifest_version": "public-data-sources-v1",
+  "recorded_at": "2026-10-01",
+  "real_service_acceptance": false,
+  "download_policy": "Do not download until the source revision, dataset terms/license, and storage scope are recorded.",
+  "sources": [
+    {
+      "source_id": "amazon-esci",
+      "provider": "Amazon Science",
+      "dataset": "ESCI Shopping Queries Dataset",
+      "canonical_url": "https://github.com/amazon-science/esci-data",
+      "origin_type": "official_amazon_source",
+      "status": "selected_pending_license_and_revision",
+      "version_or_revision": null,
+      "license_status": "pending_official_verification",
+      "download_status": "not_downloaded",
+      "sha256": null,
+      "intended_use": ["product retrieval baseline", "product ranking baseline", "query-product relevance evaluation"],
+      "excluded_use": ["merchant policy truth", "price, inventory, or order truth", "tenant/shop authorization", "customer reply acceptance"],
+      "storage": "outside_git_restricted_directory_or_oss_prefix"
+    },
+    {
+      "source_id": "hf-mcauley-amazon-reviews-2023",
+      "provider": "Hugging Face dataset hub",
+      "dataset": "McAuley-Lab/Amazon-Reviews-2023",
+      "canonical_url": "https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023",
+      "origin_type": "public_amazon_review_and_product_metadata_distribution",
+      "status": "selected_candidate_pending_dataset_card_and_original_terms",
+      "version_or_revision": null,
+      "license_status": "pending_dataset_card_and_original_source_verification",
+      "download_status": "not_downloaded",
+      "sha256": null,
+      "intended_use": ["product metadata field mapping", "review/product text retrieval experiments", "parser and deduplication tests"],
+      "excluded_use": ["merchant policy truth", "current price, inventory, or order truth", "tenant/shop authorization", "customer reply acceptance"],
+      "storage": "outside_git_restricted_directory_or_oss_prefix",
+      "license_note": "Hugging Face distribution does not grant rights; the dataset card and original source terms control use."
+    }
+  ]
+}
