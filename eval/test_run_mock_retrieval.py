@@ -116,6 +116,11 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertEqual(gate["requirements"]["provider_endpoint_region_models"]["owner"], "ai_cloud_owner")
         self.assertIn("endpoint", gate["requirements"]["provider_endpoint_region_models"]["evidence"])
 
+    def test_report_hash_ignores_timestamp(self):
+        first = {"run": {"started_at": "2026-01-01T00:00:00Z"}, "results": {"count": 1}}
+        second = {"run": {"started_at": "2027-01-01T00:00:00Z"}, "results": {"count": 1}}
+        self.assertEqual(MODULE.report_sha256(first), MODULE.report_sha256(second))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -123,6 +123,15 @@ def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def report_sha256(report: dict) -> str:
+    """Hash stable report content while excluding volatile run metadata."""
+    stable = json.loads(json.dumps(report, ensure_ascii=False))
+    stable.get("run", {}).pop("started_at", None)
+    stable.pop("report_sha256", None)
+    encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def case_results(cases: list[dict], fixture_doc_ids: set[str] | None = None) -> list[dict]:
     """Return stable, metadata-only per-case results for audit and diffing."""
     results = []
@@ -265,6 +274,7 @@ def main() -> int:
         result["case_results"] = per_case
         result["case_status_counts"] = dict(sorted(collections.Counter(row["status"] for row in per_case).items()))
         result["failed_case_ids"] = [row["case_id"] for row in per_case if row["status"] == "FAIL"]
+    result["report_sha256"] = report_sha256(result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.output:
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
