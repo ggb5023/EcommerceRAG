@@ -8,6 +8,26 @@ for a separate product retrieval track are listed in
 `McAuley-Lab/Amazon-Reviews-2023` dataset distributed through Hugging Face.
 They are not part of the 60-case business-policy truth set.
 
+`validate_public_sources.py` validates this manifest locally and without
+network access. A source may remain selected while its `revision`, dataset
+card/source terms, license, download date, and SHA-256 are pending. The
+validator rejects a non-null hash for a `not_downloaded` source, use-scope
+overlap, missing restricted-storage declaration, and any
+`real_service_acceptance` value other than `false`.
+
+`run_public_data_baseline.py` is a separate public product-data track. It does
+not read `synthetic_cases.jsonl`, call a model, or contact the network. Until a
+source is downloaded outside the repository and its revision, license, and
+original terms are verified, it prints `status=NOT_RUN` with null metrics. For
+an approved restricted JSONL/CSV input it performs field mapping, whitespace
+cleaning, duplicate removal, and label/rank based Recall@K, MRR, and NDCG
+calculations. Reports include `source_id`, `revision`, `license_status`,
+`input_sha256`, `pipeline_version`, and `real_service_acceptance=false`.
+ESCI is restricted to product retrieval/ranking metrics. Amazon Reviews is
+restricted to product metadata/text parsing, mapping, deduplication, and text
+retrieval experiments. Neither source is merchant policy, price, inventory,
+order, permission, or customer-reply truth.
+
 The authoritative source and responsibility matrix is in
 `.local/dev-docs/docs/数据来源与评测输入.md`. Codex owns synthetic dataset
 construction, evaluation review, public-source/license checks, heuristic UX
