@@ -92,9 +92,12 @@ def validate_checklist(proposal: dict[str, Any], proposal_path: Path, review: di
         errors.append("rows_not_list")
         rows = []
     row_ids = [row.get("case_id") for row in rows if isinstance(row, dict)]
-    if len(row_ids) != len(set(row_ids)):
+    valid_row_ids = [case_id for case_id in row_ids if isinstance(case_id, str)]
+    if len(valid_row_ids) != len(row_ids):
+        errors.append("review_case_id_invalid")
+    if len(valid_row_ids) != len(set(valid_row_ids)):
         errors.append("duplicate_review_case_id")
-    if set(row_ids) != set(expected):
+    if set(valid_row_ids) != set(expected):
         errors.append("review_case_id_set_mismatch")
     counts: collections.Counter[str] = collections.Counter()
     for index, row in enumerate(rows, 1):
@@ -103,14 +106,15 @@ def validate_checklist(proposal: dict[str, Any], proposal_path: Path, review: di
             continue
         case_id = row.get("case_id")
         status = row.get("review_status")
-        counts[status] += 1
-        if status not in ALLOWED_STATUSES:
+        status_key = status if isinstance(status, str) else "<invalid>"
+        counts[status_key] += 1
+        if not isinstance(status, str) or status not in ALLOWED_STATUSES:
             errors.append(f"review_status_invalid:{case_id}")
         if not isinstance(row.get("review_notes"), str):
             errors.append(f"review_notes_invalid:{case_id}")
-        elif status in {"needs_revision", "rejected"} and not row["review_notes"].strip():
+        elif isinstance(status, str) and status in {"needs_revision", "rejected"} and not row["review_notes"].strip():
             errors.append(f"review_notes_missing:{case_id}")
-        if case_id in expected:
+        if isinstance(case_id, str) and case_id in expected:
             for field in EVIDENCE_FIELDS:
                 if row.get(field) != expected[case_id].get(field):
                     errors.append(f"evidence_drift:{case_id}:{field}")

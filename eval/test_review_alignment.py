@@ -63,3 +63,14 @@ def test_revision_requires_notes(tmp_path: Path) -> None:
     report = review_alignment.validate_checklist(proposal, path, checklist)
     assert report["status"] == "FAIL"
     assert "review_notes_missing:case-1" in report["issues"]
+
+
+def test_invalid_case_id_or_status_fails_without_crashing(tmp_path: Path) -> None:
+    path, proposal = _proposal(tmp_path)
+    checklist = review_alignment.build_checklist(proposal, path)
+    checklist["rows"][0]["case_id"] = {"tampered": True}
+    checklist["rows"][0]["review_status"] = {"approved": True}
+    report = review_alignment.validate_checklist(proposal, path, checklist)
+    assert report["status"] == "FAIL"
+    assert "review_case_id_invalid" in report["issues"]
+    assert any(issue.startswith("review_status_invalid:") for issue in report["issues"])
