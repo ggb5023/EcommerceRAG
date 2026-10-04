@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -7,7 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 # isort: off
 from scripts.process_mineru_result import process
-from scripts.run_mineru_report import completed_results
+from scripts import run_mineru_report as mineru_report
+from scripts.run_mineru_report import completed_results, smoke_results
 from scripts.validate_mineru_artifacts import validate
 # isort: on
 
@@ -155,6 +157,46 @@ def test_report_does_not_guess_task_id_when_multiple_tasks_exist(tmp_path: Path)
     }), encoding="utf-8")
 
     assert completed_results(tmp_path) == {}
+
+
+def test_report_indexes_latest_smoke_failure_by_document_and_file(tmp_path: Path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "mineru-smoke.json").write_text(json.dumps({
+        "documents": [{"file_name": "doc.pdf", "status": "FAILED", "error_code": "timeout"}],
+    }), encoding="utf-8")
+    (reports / "mineru-smoke-latest.json").write_text(json.dumps({
+        "documents": [{"document_id": "doc", "file_name": "doc.pdf", "status": "FAILED",
+                        "error_code": "parse_failed", "task_id": "task-2"}],
+    }), encoding="utf-8")
+    os.utime(reports / "mineru-smoke.json", (1, 1))
+    os.utime(reports / "mineru-smoke-latest.json", (2, 2))
+    by_document, by_file = smoke_results(tmp_path)
+    assert by_document["doc"]["task_id"] == "task-2"
+    assert by_file["doc.pdf"]["error_code"] == "parse_failed"
+
+
+def test_run_report_surfaces_failed_smoke_attempt(tmp_path: Path, monkeypatch):
+    raw = tmp_path / "raw" / "doc.pdf"
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"%PDF-1.7\n")
+    input_hash = hashlib.sha256(raw.read_bytes()).hexdigest()
+    (tmp_path / "manifest.json").write_text(json.dumps({"sources": [{
+        "document_id": "doc", "file_name": "doc.pdf", "sha256": input_hash,
+    }]}), encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "mineru-smoke-doc.json").write_text(json.dumps({"documents": [{
+        "document_id": "doc", "file_name": "doc.pdf", "input_sha256": input_hash,
+        "status": "FAILED", "task_id": "task-failed", "error_code": "parse_failed",
+    }]}), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_mineru_report.py", "--root", str(tmp_path)])
+    assert mineru_report.main() == 0
+    report = json.loads((reports / "mineru-run.json").read_text(encoding="utf-8"))
+    row = report["documents"][0]
+    assert row["status"] == "FAILED"
+    assert row["reason"] == "mineru_smoke_failed:parse_failed"
+    assert row["smoke_task_id"] == "task-failed"
 
 
 def test_golden_mineru_artifacts_have_consistent_integrity_bindings(tmp_path: Path):

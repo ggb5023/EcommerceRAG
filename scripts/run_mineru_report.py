@@ -61,6 +61,29 @@ def completed_results(root: Path) -> dict[str, dict]:
     return results
 
 
+def smoke_results(root: Path) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Index the latest isolated smoke attempt by document ID and file name."""
+    by_document: dict[str, dict] = {}
+    by_file: dict[str, dict] = {}
+    report_paths = sorted(
+        (root / "reports").glob("mineru-smoke*.json"),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+    )
+    for report_path in report_paths:
+        report = read_json(report_path)
+        for row in report.get("documents", []):
+            if not isinstance(row, dict):
+                continue
+            entry = {**row, "smoke_report": report_path.name}
+            document_id = entry.get("document_id")
+            file_name = entry.get("file_name")
+            if isinstance(document_id, str) and document_id:
+                by_document[document_id] = entry
+            if isinstance(file_name, str) and file_name:
+                by_file[file_name] = entry
+    return by_document, by_file
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=PDF_ROOT)
@@ -69,6 +92,7 @@ def main() -> int:
     pdfinfo = shutil.which("pdfinfo")
     manifest = read_json(args.root / "manifest.json")
     completed = completed_results(args.root)
+    smoke_by_document, smoke_by_file = smoke_results(args.root)
     integrity = validate(args.root)
     integrity_by_document = {
         row.get("document_id"): row
@@ -88,14 +112,22 @@ def main() -> int:
                        if isinstance(item, dict) and item.get("file_name") == path.name), {})
         document_id = source.get("document_id")
         parsed = completed.get(document_id, {}) if isinstance(document_id, str) else {}
+        smoke = (smoke_by_document.get(document_id, {}) if isinstance(document_id, str) else {})
+        if not smoke:
+            smoke = smoke_by_file.get(path.name, {})
         integrity_row = integrity_by_document.get(document_id, {}) if isinstance(document_id, str) else {}
         if parsed.get("status") == "PASS" and parsed.get("chunk_count") is not None:
             status, reason = "PASS", None
+        elif smoke.get("input_sha256") == sha256(path) and smoke.get("status") == "FAILED":
+            status = "FAILED"
+            reason = f"mineru_smoke_failed:{smoke.get('error_code', 'unknown')}"
         rows.append({
             "file_name": path.name, "size_bytes": path.stat().st_size,
             "sha256": sha256(path), "status": status, "reason": reason,
             "mineru_command": mineru, "pdfinfo_command": pdfinfo,
             "document_id": document_id, "task_id": parsed.get("task_id"),
+            "smoke_task_id": smoke.get("task_id"), "smoke_report": smoke.get("smoke_report"),
+            "smoke_error_code": smoke.get("error_code"),
             "result_sha256": parsed.get("result_sha256"),
             "result_size_bytes": parsed.get("result_size_bytes"),
             "page_count": len(parsed.get("page_numbers", [])) if isinstance(parsed.get("page_numbers"), list) else None,
