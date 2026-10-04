@@ -32,7 +32,7 @@ documents:
   effective_from: '2026-01-01'
   effective_to: null
   source_type: synthetic
-  sha256: a20dba96292792f28944aae8a5f9c92551d439c34332c0f2ac518ec3abbead9d
+  sha256: 89780ce791b8aa2c8979bf9acbc979bc81c32959c658fd2f3796cc3414356d7e
 - document_id: syn-policy-a
   expected_doc_id: syn-policy-care
   path: sources/syn-policy-a.md
@@ -84,7 +84,7 @@ documents:
   effective_from: '2026-01-01'
   effective_to: null
   source_type: synthetic
-  sha256: 10e76fa7fe4f7db9335bec874571c7b4000263c719b6c90f41bd7f1c65abff11
+  sha256: e948af1557127f80d1878b042478d483cdba989d1ee1e5d142af13477d31e896
 - document_id: aligned-product-storage-v1
   expected_doc_id: syn-product-storage
   path: sources/aligned-product-storage-v1.md
@@ -344,7 +344,7 @@ documents:
   effective_from: '2026-01-01'
   effective_to: null
   source_type: synthetic
-  sha256: 3246c2bc48665eb7868ef826b0b5710c40df00764a5bedb2379be5b541235f29
+  sha256: f3a99fc91ee6910ef8c293348cfce3c1e0ae46c676627785ea74a14f282c19e0
 - document_id: aligned-web-materials-v1
   expected_doc_id: syn-web-materials
   path: sources/aligned-web-materials-v1.md

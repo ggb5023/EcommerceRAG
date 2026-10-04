@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 
@@ -30,6 +31,40 @@ def _json_chunk(chunk) -> dict[str, object]:
         "source_position": chunk.source_position,
         "rule_version": chunk.rule_version,
     }
+
+
+def build_documents(chunks: Iterable[object]) -> dict[str, dict[str, object]]:
+    """Serialize chunks while keeping document policy metadata explicit.
+
+    A mapping reviewer must be able to inspect disclosure and effective dates
+    without inferring them from the first chunk.  Rejecting drift here keeps a
+    document from carrying contradictory policy metadata.
+    """
+    documents: dict[str, dict[str, object]] = {}
+    for chunk in chunks:
+        document = documents.setdefault(
+            chunk.document_id,
+            {
+                "document_id": chunk.document_id,
+                "document_version_id": chunk.version_id,
+                "tenant_id": chunk.tenant_id,
+                "shop_id": chunk.shop_id,
+                "disclosure_class": chunk.disclosure_class,
+                "effective_from": chunk.effective_from,
+                "effective_to": chunk.effective_to,
+                "source_type": "synthetic-local-source",
+                "source_version": "ecommerce-demo-v1",
+                "chunks": [],
+            },
+        )
+        if (
+            document["disclosure_class"] != chunk.disclosure_class
+            or document["effective_from"] != chunk.effective_from
+            or document["effective_to"] != chunk.effective_to
+        ):
+            raise ValueError(f"inconsistent policy metadata for {chunk.document_id}")
+        document["chunks"].append(_json_chunk(chunk))
+    return documents
 
 
 def main() -> int:
@@ -52,21 +87,7 @@ def main() -> int:
     from app.ingest.pipeline import load_manifest_index
 
     index = load_manifest_index(args.manifest)
-    documents: dict[str, dict[str, object]] = {}
-    for chunk in index.chunks:
-        document = documents.setdefault(
-            chunk.document_id,
-            {
-                "document_id": chunk.document_id,
-                "document_version_id": chunk.version_id,
-                "tenant_id": chunk.tenant_id,
-                "shop_id": chunk.shop_id,
-                "source_type": "synthetic-local-source",
-                "source_version": "ecommerce-demo-v1",
-                "chunks": [],
-            },
-        )
-        document["chunks"].append(_json_chunk(chunk))
+    documents = build_documents(index.chunks)
 
     args.output.mkdir(parents=True, exist_ok=True)
     payload = "\n".join(
