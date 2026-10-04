@@ -31,7 +31,13 @@ def test_unresolved_revision_proposal_is_read_only_and_explicit() -> None:
 
 
 def test_no_unresolved_rows_is_explicit(tmp_path: Path) -> None:
-    review = {"rows": [{"case_id": "syn-001", "review_status": "approved", "review_notes": ""}]}
+    review = {
+        "rows": [{"case_id": "syn-001", "review_status": "approved", "review_notes": ""}],
+        "case_count": 1,
+        "proposal_sha256": "0" * 64,
+        "review_status_counts": {"approved": 1},
+        "real_service_acceptance": False,
+    }
     path = tmp_path / "review.json"
     path.write_text(json.dumps(review), encoding="utf-8")
     cases = tmp_path / "cases.jsonl"
@@ -41,3 +47,19 @@ def test_no_unresolved_rows_is_explicit(tmp_path: Path) -> None:
     report = revision.build_proposal(cases, path, corpus)
     assert report["status"] == "NO_UNRESOLVED_ROWS"
     assert report["rows"] == []
+
+
+def test_review_binding_fields_are_required(tmp_path: Path) -> None:
+    review = {"rows": [], "case_count": 0, "review_status_counts": {}}
+    review_path = tmp_path / "review.json"
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+    cases = tmp_path / "cases.jsonl"
+    cases.write_text("", encoding="utf-8")
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text("", encoding="utf-8")
+    try:
+        revision.build_proposal(cases, review_path, corpus)
+    except ValueError as error:
+        assert "real_service_acceptance" in str(error)
+    else:
+        raise AssertionError("missing review binding must fail")

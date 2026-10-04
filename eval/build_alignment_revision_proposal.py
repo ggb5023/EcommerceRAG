@@ -55,6 +55,13 @@ def _source_text(corpus: Path, document_id: str) -> str:
 def build_proposal(cases_path: Path, review_path: Path, corpus_path: Path) -> dict[str, Any]:
     cases = _cases(cases_path)
     review = _load(review_path)
+    if review.get("real_service_acceptance") is not False:
+        raise ValueError("review real_service_acceptance must be false")
+    if review.get("case_count") != len(cases):
+        raise ValueError("review case_count does not match immutable input")
+    proposal_sha = review.get("proposal_sha256")
+    if not isinstance(proposal_sha, str) or len(proposal_sha) != 64:
+        raise ValueError("review proposal_sha256 is missing or malformed")
     rows = review.get("rows") if isinstance(review, dict) else None
     if not isinstance(rows, list):
         raise TypeError("review.rows must be a list")
@@ -108,6 +115,15 @@ def build_proposal(cases_path: Path, review_path: Path, corpus_path: Path) -> di
                 ],
             }
         )
+    review_counts = review.get("review_status_counts")
+    if not isinstance(review_counts, dict):
+        raise ValueError("review_status_counts is missing")
+    expected_unresolved = sum(
+        int(review_counts.get(status, 0) or 0)
+        for status in ("needs_revision", "rejected")
+    )
+    if expected_unresolved != len(proposals):
+        raise ValueError("review status counts disagree with unresolved rows")
     return {
         "proposal_version": "aligned-evidence-revision-v1",
         "status": "PENDING_REVIEW" if proposals else "NO_UNRESOLVED_ROWS",
