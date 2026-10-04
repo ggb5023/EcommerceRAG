@@ -8,14 +8,22 @@ from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from grpc_reflection.v1alpha import reflection
 
 from app import rag_service
+from app.ingest import service as ingest_service
 
 
 def main():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=4),
+        options=(
+            ("grpc.max_receive_message_length", 12 * 1024 * 1024),
+            ("grpc.max_send_message_length", 24 * 1024 * 1024),
+        ),
+    )
     health_service = health.HealthServicer()
     health_pb2_grpc.add_HealthServicer_to_server(health_service, server)
     health_service.set("", health_pb2.HealthCheckResponse.SERVING)
     rag_service.register(server)
+    ingest_service.register(server)
     if os.environ.get("APP_ENV", "development") in {"development", "test"}:
         reflection.enable_server_reflection(
             (health.SERVICE_NAME, reflection.SERVICE_NAME, "rag.v1.RagService"), server

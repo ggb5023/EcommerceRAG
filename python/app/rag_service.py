@@ -7,8 +7,10 @@ data completely out of the first milestone.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import threading
 import time
 from datetime import UTC, date, datetime
 from hashlib import sha256
@@ -18,7 +20,7 @@ from typing import Any
 import grpc
 
 from app.authorization import ScopeError, validate_scope
-from app.ingest.pipeline import load_manifest_index
+from app.ingest.pipeline import Chunk, LocalIndex, load_manifest_index
 from rag.v1 import rag_pb2, rag_pb2_grpc
 
 
@@ -70,6 +72,8 @@ _SYNTHETIC_FIXTURES = (
 )
 FIXTURES = (_SHIPPING, *_SYNTHETIC_FIXTURES)
 _LOCAL_INDEX = None
+_INDEX_LOCK = threading.RLock()
+_DYNAMIC_DOCUMENTS: set[tuple[str, str, str]] = set()
 _PROFILE = os.environ.get("RAG_PROFILE") or ("synthetic_import_mock" if os.environ.get("SYNTHETIC_MANIFEST") else "m1_fixture_mock")
 if _PROFILE not in {"m1_fixture_mock", "synthetic_import_mock"} or (_PROFILE == "synthetic_import_mock") != bool(os.environ.get("SYNTHETIC_MANIFEST")):
     raise ValueError("RAG_PROFILE and manifest must select a consistent mock profile")
@@ -142,16 +146,18 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
             context.abort(error.code, "authorization scope could not be verified")
 
     def _canonical(self, item):
-        if _LOCAL_INDEX is not None:
+        with _INDEX_LOCK:
+            index = _LOCAL_INDEX
+        if index is not None:
             return any(c.tenant_id == item.tenant_id and c.shop_id == item.shop_id
                        and c.document_id == item.document_id and c.version_id == item.version_id
                        and c.chunk_id == item.id and c.content == item.content
                        and c.source_ref == item.source_ref
                        and c.disclosure_class == item.disclosure_class
-                       and _LOCAL_INDEX._active_versions.get((c.tenant_id, c.document_id)) == c.version_id
+                       and index._active_versions.get((c.tenant_id, c.document_id)) == c.version_id
                        and (not c.effective_from or _BUSINESS_DATE >= c.effective_from)
                        and (not c.effective_to or _BUSINESS_DATE < c.effective_to)
-                       for c in _LOCAL_INDEX.chunks)
+                       for c in index.chunks)
         return any(f["tenant_id"] == item.tenant_id and f["shop_id"] == item.shop_id
                    and f["document_id"] == item.document_id and f["version_id"] == item.version_id
                    and f["id"] == item.id and f["content"] == item.content
@@ -192,11 +198,13 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
         query = request.query.strip()
         if not query:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is required")
-        if _LOCAL_INDEX is not None:
+        with _INDEX_LOCK:
+            index = _LOCAL_INDEX
+        if index is not None:
             fact_query = any(word in query.lower() for word in ("价格", "库存", "订单", "price", "stock", "order"))
-            documents = {c.document_id for c in _LOCAL_INDEX.chunks
+            documents = {c.document_id for c in index.chunks
                          if bool(c.metadata.get("fact_type")) == fact_query}
-            matches = _LOCAL_INDEX.search(query, tenant_id=request.context.tenant_id,
+            matches = index.search(query, tenant_id=request.context.tenant_id,
                                           shop_id=request.context.shop_id or None,
                                           allowed_shop_ids=set(request.context.allowed_shop_ids),
                                           role=request.context.role,
@@ -238,6 +246,71 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
         self._authorize(request.context, context)
         yield rag_pb2.SearchResponse(phase="complete", complete=True,
                                      request_id=request.context.request_id, is_mock=True)
+
+    def ReloadSyntheticIndex(self, request, context):
+        global _LOCAL_INDEX
+        self._authorize(request.context, context)
+        if _PROFILE != "synthetic_import_mock" or _LOCAL_INDEX is None:
+            context.abort(grpc.StatusCode.FAILED_PRECONDITION, "synthetic index reload is disabled")
+        scope = request.context
+        allowed_documents = set(scope.allowed_document_ids)
+        replace_documents = set(request.replace_document_ids)
+        remove_documents = set(request.remove_document_ids)
+        if replace_documents & remove_documents:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "document cannot be replaced and removed together")
+        if not replace_documents.issubset(allowed_documents):
+            context.abort(grpc.StatusCode.PERMISSION_DENIED, "replacement scope is not authorized")
+        # Removal is an internal Go-issued command.  Go has already checked the
+        # document's tenant/shop ownership and current publication state; the
+        # signed scope here still bounds every existing chunk by tenant/shop.
+        replacement: list[Chunk] = []
+        active_versions: dict[str, str] = {}
+        for item in request.chunks:
+            if (item.tenant_id != scope.tenant_id or item.shop_id not in set(scope.allowed_shop_ids)
+                    or item.document_id not in replace_documents
+                    or item.disclosure_class != "external_allowed"):
+                context.abort(grpc.StatusCode.PERMISSION_DENIED, "index chunk is outside the signed scope")
+            try:
+                metadata = json.loads(item.metadata_json or "{}")
+            except json.JSONDecodeError:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "index metadata is invalid")
+            if not isinstance(metadata, dict):
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "index metadata is invalid")
+            metadata.update({"tenant_id": item.tenant_id, "shop_id": item.shop_id,
+                             "disclosure_class": item.disclosure_class,
+                             "effective_from": item.effective_from or None,
+                             "effective_to": item.effective_to or None})
+            replacement.append(Chunk(
+                document_id=item.document_id, version_id=item.version_id, chunk_id=item.chunk_id,
+                title=item.title, heading=tuple(part for part in item.heading_path.split(" / ") if part),
+                content=item.content, source_ref=item.source_ref, tenant_id=item.tenant_id,
+                shop_id=item.shop_id, disclosure_class=item.disclosure_class,
+                effective_from=item.effective_from or None, effective_to=item.effective_to or None,
+                section_seq=item.section_seq, chunk_index=item.chunk_index,
+                split_reason="published", chunk_hash=item.chunk_id.removeprefix("chunk-"),
+                metadata=metadata,
+            ))
+            active_versions[item.document_id] = item.version_id
+        with _INDEX_LOCK:
+            current = _LOCAL_INDEX
+            retained = [chunk for chunk in current.chunks
+                        if not ((chunk.tenant_id, chunk.shop_id, chunk.document_id) in _DYNAMIC_DOCUMENTS
+                                and chunk.tenant_id == scope.tenant_id
+                                and chunk.shop_id in set(scope.allowed_shop_ids)
+                                and chunk.document_id in replace_documents | remove_documents)]
+            updated = LocalIndex([*retained, *replacement])
+            for document_id, version_id in active_versions.items():
+                updated.activate(scope.tenant_id, document_id, version_id)
+            _DYNAMIC_DOCUMENTS.difference_update({
+                key for key in _DYNAMIC_DOCUMENTS
+                if key[0] == scope.tenant_id and key[1] in set(scope.allowed_shop_ids)
+                and key[2] in replace_documents | remove_documents
+            })
+            _DYNAMIC_DOCUMENTS.update((scope.tenant_id, shop, document_id)
+                                      for shop in scope.allowed_shop_ids
+                                      for document_id in active_versions)
+            _LOCAL_INDEX = updated
+        return rag_pb2.ReloadSyntheticIndexResponse(accepted_chunks=len(replacement))
 
     def Generate(self, request, context):
         self._authorize(request.context, context)

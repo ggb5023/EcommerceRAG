@@ -29,6 +29,11 @@ class RagServiceStub:
                 request_serializer=rag_dot_v1_dot_rag__pb2.GenerateRequest.SerializeToString,
                 response_deserializer=rag_dot_v1_dot_rag__pb2.GenerateResponse.FromString,
                 _registered_method=True)
+        self.ReloadSyntheticIndex = channel.unary_unary(
+                '/rag.v1.RagService/ReloadSyntheticIndex',
+                request_serializer=rag_dot_v1_dot_rag__pb2.ReloadSyntheticIndexRequest.SerializeToString,
+                response_deserializer=rag_dot_v1_dot_rag__pb2.ReloadSyntheticIndexResponse.FromString,
+                _registered_method=True)
 
 
 class RagServiceServicer:
@@ -52,6 +57,12 @@ class RagServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReloadSyntheticIndex(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RagServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -69,6 +80,11 @@ def add_RagServiceServicer_to_server(servicer, server):
                     servicer.Generate,
                     request_deserializer=rag_dot_v1_dot_rag__pb2.GenerateRequest.FromString,
                     response_serializer=rag_dot_v1_dot_rag__pb2.GenerateResponse.SerializeToString,
+            ),
+            'ReloadSyntheticIndex': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReloadSyntheticIndex,
+                    request_deserializer=rag_dot_v1_dot_rag__pb2.ReloadSyntheticIndexRequest.FromString,
+                    response_serializer=rag_dot_v1_dot_rag__pb2.ReloadSyntheticIndexResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -162,6 +178,33 @@ class RagService:
             metadata,
             _registered_method=True)
 
+    @staticmethod
+    def ReloadSyntheticIndex(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rag.v1.RagService/ReloadSyntheticIndex',
+            rag_dot_v1_dot_rag__pb2.ReloadSyntheticIndexRequest.SerializeToString,
+            rag_dot_v1_dot_rag__pb2.ReloadSyntheticIndexResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
 
 class IngestServiceStub:
     """Missing associated documentation comment in .proto file."""
@@ -187,6 +230,16 @@ class IngestServiceStub:
                 request_serializer=rag_dot_v1_dot_rag__pb2.CancelRequest.SerializeToString,
                 response_deserializer=rag_dot_v1_dot_rag__pb2.CancelResponse.FromString,
                 _registered_method=True)
+        self.ValidatePackage = channel.unary_unary(
+                '/rag.v1.IngestService/ValidatePackage',
+                request_serializer=rag_dot_v1_dot_rag__pb2.ValidatePackageRequest.SerializeToString,
+                response_deserializer=rag_dot_v1_dot_rag__pb2.ValidatePackageResponse.FromString,
+                _registered_method=True)
+        self.ParsePackage = channel.unary_unary(
+                '/rag.v1.IngestService/ParsePackage',
+                request_serializer=rag_dot_v1_dot_rag__pb2.ParsePackageRequest.SerializeToString,
+                response_deserializer=rag_dot_v1_dot_rag__pb2.ParsePackageResponse.FromString,
+                _registered_method=True)
 
 
 class IngestServiceServicer:
@@ -210,6 +263,18 @@ class IngestServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ValidatePackage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ParsePackage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_IngestServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -227,6 +292,16 @@ def add_IngestServiceServicer_to_server(servicer, server):
                     servicer.Cancel,
                     request_deserializer=rag_dot_v1_dot_rag__pb2.CancelRequest.FromString,
                     response_serializer=rag_dot_v1_dot_rag__pb2.CancelResponse.SerializeToString,
+            ),
+            'ValidatePackage': grpc.unary_unary_rpc_method_handler(
+                    servicer.ValidatePackage,
+                    request_deserializer=rag_dot_v1_dot_rag__pb2.ValidatePackageRequest.FromString,
+                    response_serializer=rag_dot_v1_dot_rag__pb2.ValidatePackageResponse.SerializeToString,
+            ),
+            'ParsePackage': grpc.unary_unary_rpc_method_handler(
+                    servicer.ParsePackage,
+                    request_deserializer=rag_dot_v1_dot_rag__pb2.ParsePackageRequest.FromString,
+                    response_serializer=rag_dot_v1_dot_rag__pb2.ParsePackageResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -310,6 +385,60 @@ class IngestService:
             '/rag.v1.IngestService/Cancel',
             rag_dot_v1_dot_rag__pb2.CancelRequest.SerializeToString,
             rag_dot_v1_dot_rag__pb2.CancelResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ValidatePackage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rag.v1.IngestService/ValidatePackage',
+            rag_dot_v1_dot_rag__pb2.ValidatePackageRequest.SerializeToString,
+            rag_dot_v1_dot_rag__pb2.ValidatePackageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ParsePackage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rag.v1.IngestService/ParsePackage',
+            rag_dot_v1_dot_rag__pb2.ParsePackageRequest.SerializeToString,
+            rag_dot_v1_dot_rag__pb2.ParsePackageResponse.FromString,
             options,
             channel_credentials,
             insecure,

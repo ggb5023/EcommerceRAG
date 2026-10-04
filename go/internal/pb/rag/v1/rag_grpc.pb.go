@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RagService_Understand_FullMethodName = "/rag.v1.RagService/Understand"
-	RagService_Search_FullMethodName     = "/rag.v1.RagService/Search"
-	RagService_Generate_FullMethodName   = "/rag.v1.RagService/Generate"
+	RagService_Understand_FullMethodName           = "/rag.v1.RagService/Understand"
+	RagService_Search_FullMethodName               = "/rag.v1.RagService/Search"
+	RagService_Generate_FullMethodName             = "/rag.v1.RagService/Generate"
+	RagService_ReloadSyntheticIndex_FullMethodName = "/rag.v1.RagService/ReloadSyntheticIndex"
 )
 
 // RagServiceClient is the client API for RagService service.
@@ -31,6 +32,7 @@ type RagServiceClient interface {
 	Understand(ctx context.Context, in *UnderstandRequest, opts ...grpc.CallOption) (*UnderstandResponse, error)
 	Search(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SearchResponse], error)
 	Generate(ctx context.Context, in *GenerateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateResponse], error)
+	ReloadSyntheticIndex(ctx context.Context, in *ReloadSyntheticIndexRequest, opts ...grpc.CallOption) (*ReloadSyntheticIndexResponse, error)
 }
 
 type ragServiceClient struct {
@@ -89,6 +91,16 @@ func (c *ragServiceClient) Generate(ctx context.Context, in *GenerateRequest, op
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RagService_GenerateClient = grpc.ServerStreamingClient[GenerateResponse]
 
+func (c *ragServiceClient) ReloadSyntheticIndex(ctx context.Context, in *ReloadSyntheticIndexRequest, opts ...grpc.CallOption) (*ReloadSyntheticIndexResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReloadSyntheticIndexResponse)
+	err := c.cc.Invoke(ctx, RagService_ReloadSyntheticIndex_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RagServiceServer is the server API for RagService service.
 // All implementations must embed UnimplementedRagServiceServer
 // for forward compatibility.
@@ -96,6 +108,7 @@ type RagServiceServer interface {
 	Understand(context.Context, *UnderstandRequest) (*UnderstandResponse, error)
 	Search(*SearchRequest, grpc.ServerStreamingServer[SearchResponse]) error
 	Generate(*GenerateRequest, grpc.ServerStreamingServer[GenerateResponse]) error
+	ReloadSyntheticIndex(context.Context, *ReloadSyntheticIndexRequest) (*ReloadSyntheticIndexResponse, error)
 	mustEmbedUnimplementedRagServiceServer()
 }
 
@@ -114,6 +127,9 @@ func (UnimplementedRagServiceServer) Search(*SearchRequest, grpc.ServerStreaming
 }
 func (UnimplementedRagServiceServer) Generate(*GenerateRequest, grpc.ServerStreamingServer[GenerateResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Generate not implemented")
+}
+func (UnimplementedRagServiceServer) ReloadSyntheticIndex(context.Context, *ReloadSyntheticIndexRequest) (*ReloadSyntheticIndexResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReloadSyntheticIndex not implemented")
 }
 func (UnimplementedRagServiceServer) mustEmbedUnimplementedRagServiceServer() {}
 func (UnimplementedRagServiceServer) testEmbeddedByValue()                    {}
@@ -176,6 +192,24 @@ func _RagService_Generate_Handler(srv interface{}, stream grpc.ServerStream) err
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RagService_GenerateServer = grpc.ServerStreamingServer[GenerateResponse]
 
+func _RagService_ReloadSyntheticIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReloadSyntheticIndexRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RagServiceServer).ReloadSyntheticIndex(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RagService_ReloadSyntheticIndex_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RagServiceServer).ReloadSyntheticIndex(ctx, req.(*ReloadSyntheticIndexRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RagService_ServiceDesc is the grpc.ServiceDesc for RagService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -186,6 +220,10 @@ var RagService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Understand",
 			Handler:    _RagService_Understand_Handler,
+		},
+		{
+			MethodName: "ReloadSyntheticIndex",
+			Handler:    _RagService_ReloadSyntheticIndex_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -204,9 +242,11 @@ var RagService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	IngestService_Submit_FullMethodName    = "/rag.v1.IngestService/Submit"
-	IngestService_GetStatus_FullMethodName = "/rag.v1.IngestService/GetStatus"
-	IngestService_Cancel_FullMethodName    = "/rag.v1.IngestService/Cancel"
+	IngestService_Submit_FullMethodName          = "/rag.v1.IngestService/Submit"
+	IngestService_GetStatus_FullMethodName       = "/rag.v1.IngestService/GetStatus"
+	IngestService_Cancel_FullMethodName          = "/rag.v1.IngestService/Cancel"
+	IngestService_ValidatePackage_FullMethodName = "/rag.v1.IngestService/ValidatePackage"
+	IngestService_ParsePackage_FullMethodName    = "/rag.v1.IngestService/ParsePackage"
 )
 
 // IngestServiceClient is the client API for IngestService service.
@@ -216,6 +256,8 @@ type IngestServiceClient interface {
 	Submit(ctx context.Context, in *SubmitRequest, opts ...grpc.CallOption) (*SubmitResponse, error)
 	GetStatus(ctx context.Context, in *GetStatusRequest, opts ...grpc.CallOption) (*GetStatusResponse, error)
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
+	ValidatePackage(ctx context.Context, in *ValidatePackageRequest, opts ...grpc.CallOption) (*ValidatePackageResponse, error)
+	ParsePackage(ctx context.Context, in *ParsePackageRequest, opts ...grpc.CallOption) (*ParsePackageResponse, error)
 }
 
 type ingestServiceClient struct {
@@ -256,6 +298,26 @@ func (c *ingestServiceClient) Cancel(ctx context.Context, in *CancelRequest, opt
 	return out, nil
 }
 
+func (c *ingestServiceClient) ValidatePackage(ctx context.Context, in *ValidatePackageRequest, opts ...grpc.CallOption) (*ValidatePackageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidatePackageResponse)
+	err := c.cc.Invoke(ctx, IngestService_ValidatePackage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ingestServiceClient) ParsePackage(ctx context.Context, in *ParsePackageRequest, opts ...grpc.CallOption) (*ParsePackageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ParsePackageResponse)
+	err := c.cc.Invoke(ctx, IngestService_ParsePackage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IngestServiceServer is the server API for IngestService service.
 // All implementations must embed UnimplementedIngestServiceServer
 // for forward compatibility.
@@ -263,6 +325,8 @@ type IngestServiceServer interface {
 	Submit(context.Context, *SubmitRequest) (*SubmitResponse, error)
 	GetStatus(context.Context, *GetStatusRequest) (*GetStatusResponse, error)
 	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
+	ValidatePackage(context.Context, *ValidatePackageRequest) (*ValidatePackageResponse, error)
+	ParsePackage(context.Context, *ParsePackageRequest) (*ParsePackageResponse, error)
 	mustEmbedUnimplementedIngestServiceServer()
 }
 
@@ -281,6 +345,12 @@ func (UnimplementedIngestServiceServer) GetStatus(context.Context, *GetStatusReq
 }
 func (UnimplementedIngestServiceServer) Cancel(context.Context, *CancelRequest) (*CancelResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Cancel not implemented")
+}
+func (UnimplementedIngestServiceServer) ValidatePackage(context.Context, *ValidatePackageRequest) (*ValidatePackageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ValidatePackage not implemented")
+}
+func (UnimplementedIngestServiceServer) ParsePackage(context.Context, *ParsePackageRequest) (*ParsePackageResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ParsePackage not implemented")
 }
 func (UnimplementedIngestServiceServer) mustEmbedUnimplementedIngestServiceServer() {}
 func (UnimplementedIngestServiceServer) testEmbeddedByValue()                       {}
@@ -357,6 +427,42 @@ func _IngestService_Cancel_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IngestService_ValidatePackage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidatePackageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IngestServiceServer).ValidatePackage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IngestService_ValidatePackage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IngestServiceServer).ValidatePackage(ctx, req.(*ValidatePackageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IngestService_ParsePackage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ParsePackageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IngestServiceServer).ParsePackage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IngestService_ParsePackage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IngestServiceServer).ParsePackage(ctx, req.(*ParsePackageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IngestService_ServiceDesc is the grpc.ServiceDesc for IngestService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -375,6 +481,14 @@ var IngestService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Cancel",
 			Handler:    _IngestService_Cancel_Handler,
+		},
+		{
+			MethodName: "ValidatePackage",
+			Handler:    _IngestService_ValidatePackage_Handler,
+		},
+		{
+			MethodName: "ParsePackage",
+			Handler:    _IngestService_ParsePackage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import tempfile
 import unittest
@@ -300,7 +299,7 @@ class AlibabaProviderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.code, "invalid_response")
 
     async def test_timeout_and_cancellation_are_stable(self):
-        provider, _ = self.make_provider([asyncio.TimeoutError()])
+        provider, _ = self.make_provider([TimeoutError()])
         with self.assertRaises(ProviderError) as raised:
             await provider.generate([{"role": "user", "content": "x"}])
         self.assertEqual(raised.exception.code, "timeout")

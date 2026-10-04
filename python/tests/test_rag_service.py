@@ -3,14 +3,15 @@ import os
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
-import grpc
 from pathlib import Path
+from unittest.mock import patch
 
-from app.rag_service import FIXTURES, RagService, rag_pb2
-from app.authorization import ScopeError
+import grpc
+
 from app import rag_service
+from app.authorization import ScopeError
 from app.ingest.pipeline import load_manifest_index
+from app.rag_service import FIXTURES, RagService, rag_pb2
 
 
 class Ctx:
@@ -242,6 +243,23 @@ assert items[0].evidence[0].id.startswith('chunk-')
                "SYNTHETIC_MANIFEST": str(root / "data/synthetic/ecommerce-demo-v1/manifest.yaml")}
         completed = subprocess.run([sys.executable, "-c", script], cwd=root, env=env, capture_output=True, text=True, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_reload_allows_removing_existing_dynamic_document_after_revoke(self):
+        root = Path(__file__).resolve().parents[2]
+        index = load_manifest_index(root / "data/synthetic/ecommerce-demo-v1/manifest.yaml")
+        scope = request_context(tenant_id="demo-tenant-a", shop_id="demo-shop-east",
+                                allowed_shop_ids=["demo-shop-east"],
+                                allowed_document_ids=["syn-products-a"])
+        service = RagService(scope_validator=lambda scope: None)
+        request = rag_pb2.ReloadSyntheticIndexRequest(
+            context=scope, remove_document_ids=["admin-smoke-doc"])
+        with patch.object(rag_service, "_PROFILE", "synthetic_import_mock"), \
+             patch.object(rag_service, "_LOCAL_INDEX", index), \
+             patch.object(rag_service, "_DYNAMIC_DOCUMENTS", {
+                 ("demo-tenant-a", "demo-shop-east", "admin-smoke-doc")}), \
+             patch.object(rag_service, "_INDEX_LOCK", rag_service.threading.RLock()):
+            result = service.ReloadSyntheticIndex(request, Ctx())
+        self.assertEqual(result.accepted_chunks, 0)
 
 
 if __name__ == "__main__":
