@@ -47,5 +47,19 @@ class MigrationRunnerStaticTests(unittest.TestCase):
             self.assertIn(fragment, sql)
         self.assertIn("m1-auth-constraints.sql", RUNNER.read_text(encoding="utf-8"))
 
+    def test_admin_role_catalog_is_versioned_and_read_only_for_app(self):
+        migration = ROOT / "sql/migrations/0014_admin_role_catalog.sql"
+        sql = migration.read_text(encoding="utf-8")
+        for fragment in (
+            "CREATE TABLE admin_role_catalog",
+            "platform_access_admin",
+            "platform_role_approver",
+            "support_permission_reviewer",
+            "merchant_member",
+            "GRANT SELECT ON admin_role_catalog TO rag_app",
+            ":'migration_checksum'",
+        ):
+            self.assertIn(fragment, sql)
+
 if __name__ == "__main__":
     unittest.main()

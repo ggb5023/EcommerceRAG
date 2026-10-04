@@ -94,6 +94,7 @@ if [[ "$has_checksum_column" == t ]]; then
 fi
 
 psql "$M1_APP_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$repo/tests/m1-schema-smoke.sql"
+psql "$M1_APP_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$repo/tests/admin-control-plane-smoke.sql"
 psql "$M1_MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$repo/tests/m1-auth-constraints.sql"
 if [[ "$legacy_unverified" == 1 ]]; then
   echo "LEGACY_UNVERIFIED M1 isolated migrations and application-role schema smoke ($db_name)"

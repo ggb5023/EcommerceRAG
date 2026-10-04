@@ -62,7 +62,7 @@ func (g *gateway) refreshAuthorization(ctx context.Context) error {
 	if revoked != nil || tenantStatus != "active" {
 		return status.Error(codes.PermissionDenied, "identity_revoked")
 	}
-	if role != g.session.role || revision != g.session.permissionRevision || externalID != g.session.user || !slices.Equal(shops, g.session.allowedShops) {
+	if role != g.session.role || externalID != g.session.user || !slices.Equal(shops, g.session.allowedShops) {
 		return status.Error(codes.PermissionDenied, "permission_changed")
 	}
 	if !slices.Contains([]string{"owner", "admin", "operator", "viewer"}, role) {
@@ -81,7 +81,19 @@ func (g *gateway) refreshAuthorization(ctx context.Context) error {
 	if !active {
 		return status.Error(codes.PermissionDenied, "shop_not_authorized")
 	}
+	// The mock gateway resolves identity from a fixed development adapter, not
+	// from a browser token. Refresh policy revision after revalidating the full
+	// identity tuple so source/document ACL changes do not strand the console.
+	g.revisionMu.Lock()
+	g.session.permissionRevision = revision
+	g.revisionMu.Unlock()
 	return nil
+}
+
+func (g *gateway) currentPermissionRevision() string {
+	g.revisionMu.RLock()
+	defer g.revisionMu.RUnlock()
+	return g.session.permissionRevision
 }
 
 func (g *gateway) requireWriteRole(w http.ResponseWriter) bool {
@@ -104,6 +116,10 @@ func authorizationHTTPStatus(err error) int {
 // Registered resources inherit shop scope unless an ACL gate narrows it.
 // Every present tenant/source/document gate must grant this principal.
 func (g *gateway) authorizedDocuments(ctx context.Context) (map[string]resourceScope, error) {
+	return g.authorizedDocumentsForShop(ctx, g.session.shop)
+}
+
+func (g *gateway) authorizedDocumentsForShop(ctx context.Context, shop string) (map[string]resourceScope, error) {
 	rows, err := g.db.Query(ctx, `SELECT d.logical_key,s.shop_id,COALESCE(d.meta_json->>'disclosure_class','unclassified')
       FROM document d JOIN source s ON s.tenant_id=d.tenant_id AND s.id=d.source_id
       JOIN tenant t ON t.id=d.tenant_id
@@ -116,7 +132,7 @@ func (g *gateway) authorizedDocuments(ctx context.Context) (map[string]resourceS
             AND NOT EXISTS (SELECT 1 FROM acl a WHERE a.tenant_id=d.tenant_id AND a.resource_type=gate.kind AND a.resource_id=gate.id
               AND a.permission IN ('read','write','admin') AND
               ((a.subject_type='user' AND a.subject_id IN ($4,$5)) OR (a.subject_type='role' AND a.subject_id=$6))))`,
-		g.session.tenantID, g.session.shop, g.session.allowedShops, g.session.user, strconv.FormatInt(g.session.userID, 10), g.session.role)
+		g.session.tenantID, shop, g.session.allowedShops, g.session.user, strconv.FormatInt(g.session.userID, 10), g.session.role)
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, "authorization_unavailable")
 	}
@@ -148,8 +164,33 @@ func (g *gateway) evidenceAllowed(ctx context.Context, item *ragv1.Evidence) (bo
 		return false, err
 	}
 	resource, found := resources[item.DocumentId]
-	return found && resource.shop == item.ShopId && resource.disclosure == "external_allowed" &&
-		(item.DisclosureClass == "" || item.DisclosureClass == resource.disclosure), nil
+	if !found || resource.shop != item.ShopId || resource.disclosure != "external_allowed" ||
+		(item.DisclosureClass != "" && item.DisclosureClass != resource.disclosure) {
+		return false, nil
+	}
+	if g.profile == "synthetic_import_mock" {
+		var managed bool
+		var activeVersion *string
+		err = g.db.QueryRow(ctx, `SELECT s.type='admin_manifest',active.id::text FROM document d
+			JOIN source s ON s.tenant_id=d.tenant_id AND s.id=d.source_id
+		LEFT JOIN document_version active ON active.tenant_id=d.tenant_id AND active.id=d.active_version_id
+		WHERE d.tenant_id=$1 AND d.logical_key=$2 AND s.shop_id=$3`,
+			g.session.tenantID, item.DocumentId, item.ShopId).Scan(&managed, &activeVersion)
+		if err != nil {
+			return false, status.Error(codes.Unavailable, "authorization_unavailable")
+		}
+		if !activeEvidenceVersion(managed, activeVersion, item.VersionId) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func activeEvidenceVersion(managed bool, activeVersion *string, evidenceVersion string) bool {
+	if !managed {
+		return true
+	}
+	return activeVersion != nil && evidenceVersion != "" && evidenceVersion == *activeVersion
 }
 
 func scopeMAC(key []byte, scope *ragv1.RequestContext) []byte {
@@ -162,10 +203,17 @@ func scopeMAC(key []byte, scope *ragv1.RequestContext) []byte {
 }
 
 func (g *gateway) issueScope(ctx context.Context, requestID string) (*ragv1.RequestContext, error) {
+	return g.issueScopeForShop(ctx, requestID, g.session.shop)
+}
+
+func (g *gateway) issueScopeForShop(ctx context.Context, requestID, shop string) (*ragv1.RequestContext, error) {
+	if !slices.Contains(g.session.allowedShops, shop) {
+		return nil, status.Error(codes.PermissionDenied, "shop_not_authorized")
+	}
 	if err := g.refreshAuthorization(ctx); err != nil {
 		return nil, err
 	}
-	resources, err := g.authorizedDocuments(ctx)
+	resources, err := g.authorizedDocumentsForShop(ctx, shop)
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +225,8 @@ func (g *gateway) issueScope(ctx context.Context, requestID string) (*ragv1.Requ
 	}
 	slices.Sort(ids)
 	scope := &ragv1.RequestContext{RequestId: requestID, TenantId: g.session.tenant, UserId: g.session.user,
-		ShopId: g.session.shop, Role: g.session.role, AllowedShopIds: append([]string(nil), g.session.allowedShops...),
-		AllShops: g.session.allShops, PermissionRevision: g.session.permissionRevision,
+		ShopId: shop, Role: g.session.role, AllowedShopIds: append([]string(nil), g.session.allowedShops...),
+		AllShops: g.session.allShops, PermissionRevision: g.currentPermissionRevision(),
 		AllowedDocumentIds: ids, EnforceDocumentScope: true, ScopeExpiresAt: time.Now().Add(turnTimeout + 5*time.Second).Unix(),
 		TenantDbId: g.session.tenantID, UserDbId: g.session.userID}
 	scope.ScopeSignature = hex.EncodeToString(scopeMAC(g.signingKey, scope))
@@ -255,7 +303,7 @@ func evidenceEqual(a, b *ragv1.Evidence) bool { return a != nil && b != nil && p
 func (g *gateway) authorizeConversationHistory(w http.ResponseWriter, r *http.Request, id int64) bool {
 	var stale bool
 	err := g.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM turn t JOIN conversation_execution e ON e.tenant_id=t.tenant_id AND e.turn_id=t.id
-        WHERE t.tenant_id=$1 AND t.conversation_id=$2 AND e.permission_revision IS DISTINCT FROM $3)`, g.session.tenantID, id, g.session.permissionRevision).Scan(&stale)
+        WHERE t.tenant_id=$1 AND t.conversation_id=$2 AND e.permission_revision IS DISTINCT FROM $3)`, g.session.tenantID, id, g.currentPermissionRevision()).Scan(&stale)
 	if err != nil {
 		writeError(w, 503, "authorization_unavailable", "authorization failed")
 		return false
@@ -280,7 +328,7 @@ func (g *gateway) authorizeExecution(w http.ResponseWriter, r *http.Request, req
 		writeError(w, 503, "authorization_unavailable", "authorization failed")
 		return false
 	}
-	if revision == nil || *revision != g.session.permissionRevision {
+	if revision == nil || *revision != g.currentPermissionRevision() {
 		writeError(w, 403, "execution_permission_changed", "historical execution scope is no longer valid")
 		return false
 	}

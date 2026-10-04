@@ -44,7 +44,7 @@ func (g *gateway) executionResult(ctx context.Context, requestID string) (map[st
 			break
 		}
 		var allowed bool
-		allowed, err = g.evidenceAllowed(ctx, &ragv1.Evidence{Id: id, DocumentId: doc, ShopId: shop})
+		allowed, err = g.evidenceAllowed(ctx, &ragv1.Evidence{Id: id, DocumentId: doc, VersionId: version, ShopId: shop})
 		if err != nil {
 			break
 		}

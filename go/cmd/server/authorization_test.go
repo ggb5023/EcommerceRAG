@@ -39,6 +39,30 @@ func TestSignedScopeRejectsEnlargementAndExpiredScope(t *testing.T) {
 	}
 }
 
+func TestActiveEvidenceVersion(t *testing.T) {
+	active := "version-2"
+	tests := []struct {
+		name          string
+		managed       bool
+		activeVersion *string
+		evidence      string
+		want          bool
+	}{
+		{name: "ordinary source", evidence: "legacy-version", want: true},
+		{name: "current published version", managed: true, activeVersion: &active, evidence: "version-2", want: true},
+		{name: "stale version", managed: true, activeVersion: &active, evidence: "version-1", want: false},
+		{name: "missing version", managed: true, activeVersion: &active, want: false},
+		{name: "missing active version", managed: true, evidence: "version-2", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := activeEvidenceVersion(test.managed, test.activeVersion, test.evidence); got != test.want {
+				t.Fatalf("activeEvidenceVersion() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSigningKeyRequiresRestrictedOwnedRegularFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "key")
 	if err := os.WriteFile(path, []byte("synthetic-test-key-with-32-bytes!!"), 0600); err != nil {

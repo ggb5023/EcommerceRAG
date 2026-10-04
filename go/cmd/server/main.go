@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ragv1 "github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1"
@@ -111,13 +113,19 @@ func (a m1IdentityAdapter) Resolve(ctx context.Context) (mockSession, error) {
 }
 
 type gateway struct {
-	db         *pgxpool.Pool
-	rag        ragv1.RagServiceClient
-	session    mockSession
-	signingKey []byte
-	profile    string
-	mu         sync.Mutex
-	cancels    map[string]context.CancelFunc
+	db              *pgxpool.Pool
+	rag             ragv1.RagServiceClient
+	ingest          ragv1.IngestServiceClient
+	grpcConn        *grpc.ClientConn
+	session         mockSession
+	signingKey      []byte
+	profile         string
+	mu              sync.Mutex
+	revisionMu      sync.RWMutex
+	adminIndexMu    sync.RWMutex
+	adminIndexReady atomic.Bool
+	ready           atomic.Bool
+	cancels         map[string]context.CancelFunc
 }
 
 type apiError struct {
@@ -201,7 +209,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("connect RAG service: %v", err)
 	}
-	g := &gateway{profile: profile, db: db, rag: ragv1.NewRagServiceClient(conn), session: session, cancels: map[string]context.CancelFunc{}}
+	g := &gateway{profile: profile, db: db, rag: ragv1.NewRagServiceClient(conn),
+		ingest: ragv1.NewIngestServiceClient(conn), grpcConn: conn, session: session, cancels: map[string]context.CancelFunc{}}
 	seedCtx, seedCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	if !syntheticMode {
 		fixture, imported, fixtureErr := g.importM1Fixture(seedCtx)
@@ -235,8 +244,21 @@ func main() {
 		addr = "127.0.0.1:8080"
 	}
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	log.Printf("M1 gateway listening on %s", addr)
-	log.Fatal(server.ListenAndServe())
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listen on gateway address: %v", err)
+	}
+	serveResult := make(chan error, 1)
+	go func() { serveResult <- server.Serve(listener) }()
+	if syntheticMode {
+		if err = g.loadActiveAdminIndexes(context.Background()); err != nil {
+			log.Fatalf("could not restore published synthetic document index: %v", err)
+		}
+		go g.runAdminIngestWorker(context.Background())
+	}
+	g.ready.Store(true)
+	log.Printf("mock gateway listening on %s", addr)
+	log.Fatal(<-serveResult)
 }
 
 func (g *gateway) routes() http.Handler {
@@ -252,7 +274,12 @@ func (g *gateway) routes() http.Handler {
 	mux.HandleFunc("GET /v1/turns/{id}", g.getTurn)
 	mux.HandleFunc("GET /v1/turns/{id}/events", g.events)
 	mux.HandleFunc("POST /v1/turns/{id}/cancel", g.cancelTurn)
+	g.registerAdminRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if g.db != nil && r.URL.Path != "/internal/authorization/validate" && !g.ready.Load() {
+			writeError(w, http.StatusServiceUnavailable, "service_starting", "service is restoring its published index")
+			return
+		}
 		if r.URL.Path != "/healthz" && r.URL.Path != "/internal/authorization/validate" && !g.authorizeHTTP(w, r) {
 			return
 		}
@@ -283,7 +310,7 @@ func (g *gateway) getSession(w http.ResponseWriter, _ *http.Request) {
 		"tenantId": g.session.tenant, "userId": g.session.user, "role": g.session.role,
 		"shopId": g.session.shop, "shopName": g.session.shop, "displayName": g.session.user, "profile": g.profile,
 		"allowedShopIds": g.session.allowedShops, "allShops": g.session.allShops,
-		"permission_revision": g.session.permissionRevision,
+		"permission_revision": g.currentPermissionRevision(),
 		"is_mock":             true,
 	})
 }
@@ -292,8 +319,8 @@ func (g *gateway) listConversations(w http.ResponseWriter, r *http.Request) {
 	rows, err := g.db.Query(r.Context(), `SELECT id, COALESCE(title,''), shop_id, created_at
 		FROM conversation c WHERE tenant_id=$1 AND user_id=$2 AND shop_id=$3
         AND NOT EXISTS(SELECT 1 FROM turn t JOIN conversation_execution e ON e.tenant_id=t.tenant_id AND e.turn_id=t.id
-            WHERE t.tenant_id=c.tenant_id AND t.conversation_id=c.id AND e.permission_revision IS DISTINCT FROM $4)
-		ORDER BY created_at DESC LIMIT 100`, g.session.tenantID, g.session.userID, g.session.shop, g.session.permissionRevision)
+			WHERE t.tenant_id=c.tenant_id AND t.conversation_id=c.id AND e.permission_revision IS DISTINCT FROM $4)
+		ORDER BY created_at DESC LIMIT 100`, g.session.tenantID, g.session.userID, g.session.shop, g.currentPermissionRevision())
 	if err != nil {
 		writeError(w, 503, "database_unavailable", "could not load conversations")
 		return
@@ -455,6 +482,26 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "idempotency_key_required", "Idempotency-Key is required")
 		return
 	}
+	readIndexLock := false
+	lockTransferred := false
+	if g.profile == "synthetic_import_mock" {
+		if err := g.ensureAdminIndexReady(r.Context()); err != nil {
+			writeError(w, 503, "published_index_unavailable", "published knowledge index is unavailable")
+			return
+		}
+		g.adminIndexMu.RLock()
+		if !g.adminIndexReady.Load() {
+			g.adminIndexMu.RUnlock()
+			writeError(w, 503, "published_index_unavailable", "published knowledge index is unavailable")
+			return
+		}
+		readIndexLock = true
+	}
+	defer func() {
+		if readIndexLock && !lockTransferred {
+			g.adminIndexMu.RUnlock()
+		}
+	}()
 	canonicalPayload, _ := json.Marshal(map[string]string{"query": query, "parent_turn_id": strings.TrimSpace(in.ParentTurnID)})
 	hash := sha256.Sum256(canonicalPayload)
 	payloadHash := hex.EncodeToString(hash[:])
@@ -558,7 +605,7 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = tx.QueryRow(r.Context(), `INSERT INTO conversation_execution(tenant_id,turn_id,execution_no,request_id,status,is_mock,deadline_at,permission_revision)
 			VALUES($1,$2,1,$3,'EXECUTING',true,$4,$5) RETURNING id`,
-			g.session.tenantID, turnID, requestID, deadline, g.session.permissionRevision).Scan(&executionID)
+			g.session.tenantID, turnID, requestID, deadline, g.currentPermissionRevision()).Scan(&executionID)
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO turn_idempotency(tenant_id,conversation_id,idempotency_key,payload_hash,turn_id)
@@ -581,7 +628,13 @@ func (g *gateway) createTurn(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	g.cancels[requestID] = cancel
 	g.mu.Unlock()
-	go g.runTurn(ctx, requestID, conversationID, turnID, executionID, query)
+	go func() {
+		if readIndexLock {
+			defer g.adminIndexMu.RUnlock()
+		}
+		g.runTurn(ctx, requestID, conversationID, turnID, executionID, query)
+	}()
+	lockTransferred = readIndexLock
 	writeJSON(w, 202, map[string]any{"id": requestID, "request_id": requestID, "status": "EXECUTING",
 		"turn_id": strconv.FormatInt(turnID, 10), "execution_no": 1, "conversation_id": strconv.FormatInt(conversationID, 10),
 		"is_mock": true, "events_url": "/v1/turns/" + requestID + "/events"})
@@ -591,7 +644,7 @@ func (g *gateway) historySummary(ctx context.Context, conversationID, currentTur
 	rows, err := g.db.Query(ctx, `SELECT m.role, COALESCE(m.content,'')
 		FROM message m JOIN turn t ON t.tenant_id=m.tenant_id AND t.id=m.turn_id
 		WHERE t.tenant_id=$1 AND t.conversation_id=$2 AND t.id<>$3 AND EXISTS (SELECT 1 FROM conversation_execution e WHERE e.tenant_id=t.tenant_id AND e.turn_id=t.id AND e.permission_revision=$4)
-		ORDER BY t.turn_no DESC,m.created_at DESC LIMIT 6`, g.session.tenantID, conversationID, currentTurnID, g.session.permissionRevision)
+		ORDER BY t.turn_no DESC,m.created_at DESC LIMIT 6`, g.session.tenantID, conversationID, currentTurnID, g.currentPermissionRevision())
 	if err != nil {
 		return ""
 	}
