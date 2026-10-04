@@ -6,6 +6,7 @@ python3 scripts/privacy_guard.py
 python3 -m unittest discover -s tests -p 'test_privacy*.py'
 python3 -m unittest discover -s tests -p 'test_worker_process_harness.py'
 python3 scripts/check-docs.py
+python3 scripts/check-doc-baseline.py
 while IFS= read -r -d '' script; do bash -n "$script"; done < <(find scripts docker -name '*.sh' -print0)
 shellcheck -S warning scripts/*.sh docker/db/*.sh docker/db/init/*.sh
 (cd go; go test -p 2 ./...; go vet ./...)

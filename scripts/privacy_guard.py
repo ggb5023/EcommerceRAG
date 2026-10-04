@@ -34,6 +34,7 @@ def blocked_path(name):
         name == 'README.md'
         or name == 'eval/README.md'
         or (name.startswith('data/synthetic/') and path.suffix.lower() in {'.md', '.markdown'})
+        or name == 'data/web/README.md'
     )
     if path.suffix.lower() in {'.md', '.markdown', '.doc', '.docx', '.pem', '.key', '.dump', '.bundle', '.log', '.bak'} and not public_markdown:
         return True
