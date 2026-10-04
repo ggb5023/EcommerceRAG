@@ -13,4 +13,5 @@ buf lint
 buf build -o /dev/null
 buf breaking --against .git#branch=main
 (cd web; npm ci --no-audit --no-fund; npm run build)
+(cd admin-web; npm ci --no-audit --no-fund; npm test; npm run build)
 echo "PASS foundation checks (business and real API tests not included)"
