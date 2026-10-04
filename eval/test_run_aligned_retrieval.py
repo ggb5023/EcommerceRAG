@@ -84,6 +84,8 @@ def test_pending_alignment_never_reports_metrics(tmp_path: Path) -> None:
     assert report["status"] == "NOT_RUN"
     assert report["metrics"]["recall_at_5"] is None
     assert report["status_counts"] == {"NOT_RUN": 1}
+    assert "alignment_pending_review" in report["issues"]
+    assert "alignment_mapping_empty" in report["issues"]
 
 
 def test_explicit_mapping_measures_actual_source_document(tmp_path: Path) -> None:
@@ -98,6 +100,22 @@ def test_explicit_mapping_measures_actual_source_document(tmp_path: Path) -> Non
     assert report["status"] == "PASS"
     assert report["measured_case_count"] == 1
     assert report["metrics"]["recall_at_5"] == 1.0
+
+
+def test_approved_empty_mapping_stays_not_run(tmp_path: Path) -> None:
+    report = _run(
+        tmp_path,
+        {
+            "status": "APPROVED",
+            "case_to_source_documents": {},
+            "real_service_acceptance": False,
+        },
+    )
+    assert report["status"] == "NOT_RUN"
+    assert report["measured_case_count"] == 0
+    assert report["metrics"] == {"recall_at_5": None, "mrr": None, "ndcg_at_5": None}
+    assert "alignment_mapping_empty" in report["issues"]
+    assert report["case_results"][0]["reason"] == "missing_alignment"
 
 
 def test_expected_document_drift_is_rejected(tmp_path: Path) -> None:

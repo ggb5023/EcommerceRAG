@@ -130,6 +130,14 @@ def main() -> int:
         issues.append("alignment_case_to_source_documents_not_object")
         mapping = {}
     input_invalid = bool(alignment_error or duplicate_corpus_ids or "alignment_case_to_source_documents_not_object" in issues)
+    if not approved:
+        status = alignment.get("status") if isinstance(alignment, dict) else None
+        if status == "PENDING_REVIEW":
+            issues.append("alignment_pending_review")
+        else:
+            issues.append(f"alignment_not_approved:{status or 'missing'}")
+    if not mapping:
+        issues.append("alignment_mapping_empty")
     for case in cases:
         case_id = case["case_id"]
         if input_invalid:
