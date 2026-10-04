@@ -35,6 +35,9 @@ def _write_inputs(tmp_path: Path, alignment: dict, *, cases_sha: str | None = No
                     "document_id": f"actual-doc-{index}",
                     "tenant_id": "tenant-a",
                     "shop_id": "shop-a",
+                    "disclosure_class": "external_allowed",
+                    "effective_from": "2026-01-01",
+                    "effective_to": None,
                     "chunks": [
                         {
                             "chunk_id": f"chunk-{index}",
@@ -44,6 +47,7 @@ def _write_inputs(tmp_path: Path, alignment: dict, *, cases_sha: str | None = No
                             "disclosure_class": "external_allowed",
                             "effective_from": "2026-01-01",
                             "effective_to": None,
+                            "source_position": {"line_start": 1, "line_end": 1},
                         }
                     ],
                 }
@@ -60,6 +64,10 @@ def _write_inputs(tmp_path: Path, alignment: dict, *, cases_sha: str | None = No
 
 def _run(tmp_path: Path, alignment: dict, **kwargs) -> dict:
     paths = _write_inputs(tmp_path, alignment, **kwargs)
+    return _run_paths(tmp_path, paths)
+
+
+def _run_paths(tmp_path: Path, paths: tuple[Path, Path, Path, Path]) -> dict:
     output = tmp_path / "report.json"
     completed = subprocess.run(
         [
@@ -142,3 +150,45 @@ def test_case_hash_drift_is_fail(tmp_path: Path) -> None:
     )
     assert report["status"] == "FAIL"
     assert "cases_sha256_mismatch" in report["issues"]
+
+
+def test_document_and_chunk_policy_drift_is_fail(tmp_path: Path) -> None:
+    paths = _write_inputs(
+        tmp_path,
+        {
+            "status": "APPROVED",
+            "case_to_source_documents": {
+                f"case-{index}": {f"label-doc-{index}": f"actual-doc-{index}"}
+                for index in range(1, 61)
+            },
+            "real_service_acceptance": False,
+        },
+    )
+    corpus = paths[2]
+    documents = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines()]
+    documents[0]["chunks"][0]["effective_to"] = "2026-10-01"
+    corpus.write_text("\n".join(json.dumps(document) for document in documents) + "\n", encoding="utf-8")
+    report = _run_paths(tmp_path, paths)
+    assert report["status"] == "FAIL"
+    assert "corpus_chunk_policy_mismatch:actual-doc-1:1:effective_to" in report["issues"]
+
+
+def test_missing_source_position_is_fail(tmp_path: Path) -> None:
+    paths = _write_inputs(
+        tmp_path,
+        {
+            "status": "APPROVED",
+            "case_to_source_documents": {
+                f"case-{index}": {f"label-doc-{index}": f"actual-doc-{index}"}
+                for index in range(1, 61)
+            },
+            "real_service_acceptance": False,
+        },
+    )
+    corpus = paths[2]
+    documents = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines()]
+    documents[0]["chunks"][0].pop("source_position")
+    corpus.write_text("\n".join(json.dumps(document) for document in documents) + "\n", encoding="utf-8")
+    report = _run_paths(tmp_path, paths)
+    assert report["status"] == "FAIL"
+    assert "corpus_chunk_source_position_invalid:actual-doc-1:1" in report["issues"]

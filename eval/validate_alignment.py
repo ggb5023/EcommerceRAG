@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from alignment_policy import assess_document, ALLOWED_DISCLOSURE_CLASSES
+from alignment_policy import ALLOWED_DISCLOSURE_CLASSES, assess_document
 
 ALLOWED_ALIGNMENT_STATUSES = {"PENDING_REVIEW", "APPROVED", "REJECTED"}
 REQUIRED_CASE_COUNT = 60
@@ -74,6 +74,16 @@ def _validate_corpus(corpus: list[dict[str, Any]]) -> tuple[dict[str, dict[str, 
             continue
         if not all(isinstance(document.get(field), str) and document[field] for field in ("tenant_id", "shop_id")):
             errors.append(f"corpus_scope_invalid:{document_id}")
+        if document.get("disclosure_class") not in ALLOWED_DISCLOSURE_CLASSES:
+            errors.append(f"corpus_document_disclosure_class_invalid:{document_id}")
+        if not _valid_date(document.get("effective_from")) or not _valid_date(document.get("effective_to")):
+            errors.append(f"corpus_document_date_invalid:{document_id}")
+        if (
+            document.get("effective_from")
+            and document.get("effective_to")
+            and date.fromisoformat(document["effective_from"]) >= date.fromisoformat(document["effective_to"])
+        ):
+            errors.append(f"corpus_document_date_range_invalid:{document_id}")
         chunks = document.get("chunks")
         if not isinstance(chunks, list):
             errors.append(f"corpus_chunks_invalid:{document_id}")
@@ -101,6 +111,11 @@ def _validate_corpus(corpus: list[dict[str, Any]]) -> tuple[dict[str, dict[str, 
                 errors.append(f"corpus_chunk_date_range_invalid:{document_id}:{chunk_number}")
             if chunk.get("disclosure_class") not in ALLOWED_DISCLOSURE_CLASSES:
                 errors.append(f"corpus_chunk_disclosure_class_invalid:{document_id}:{chunk_number}")
+            for field in ("disclosure_class", "effective_from", "effective_to"):
+                if chunk.get(field) != document.get(field):
+                    errors.append(f"corpus_chunk_policy_mismatch:{document_id}:{chunk_number}:{field}")
+            if not isinstance(chunk.get("source_position"), dict) or not chunk["source_position"]:
+                errors.append(f"corpus_chunk_source_position_invalid:{document_id}:{chunk_number}")
         documents[document_id] = document
     return documents, errors
 
