@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -54,6 +55,8 @@ class Chunk:
     split_reason: str
     chunk_hash: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_position: dict[str, int | None] = field(default_factory=dict)
+    rule_version: str = "deterministic-char-700-v1"
 
 
 class Parser(Protocol):
@@ -214,7 +217,81 @@ def chunk_elements(elements: Iterable[ParsedElement], *, max_chars: int = 700) -
                                 element.title, element.heading, piece, f"local://{element.document_id}/{chunk_hash}",
                                 element.metadata["tenant_id"], element.metadata["shop_id"], element.disclosure_class,
                                 element.effective_from, element.effective_to, section_seq, index, reason, chunk_hash,
-                                element.metadata))
+                                element.metadata, element.source_position, "deterministic-char-700-v1"))
+    return chunks
+
+
+CHUNK_RULE_VERSION = "structured-v2"
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？；.!?;])\s+|\n+")
+
+
+def _split_structured_text(content: str, max_chars: int) -> list[tuple[str, str]]:
+    """Split on sentence/paragraph boundaries, then hard split only as a last resort."""
+    if len(content) <= max_chars:
+        return [(content, "element_boundary")]
+    units = [unit.strip() for unit in _SENTENCE_BOUNDARY.split(content) if unit.strip()]
+    pieces: list[tuple[str, str]] = []
+    current = ""
+    for unit in units:
+        candidate = f"{current} {unit}".strip() if current else unit
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            pieces.append((current, "sentence_boundary"))
+            current = ""
+        while len(unit) > max_chars:
+            pieces.append((unit[:max_chars], "hard_split"))
+            unit = unit[max_chars:]
+        current = unit
+    if current:
+        pieces.append((current, "sentence_boundary" if len(pieces) else "element_boundary"))
+    return pieces
+
+
+def chunk_elements_v2(elements: Iterable[ParsedElement], *, max_chars: int = 700,
+                      rule_version: str = CHUNK_RULE_VERSION) -> list[Chunk]:
+    """Structure-aware deterministic chunks for parser/MinerU experiments.
+
+    Parsed elements already represent section/table/row boundaries.  This
+    function preserves those boundaries and only splits oversized text at
+    sentence boundaries before falling back to a hard split.
+    """
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive")
+    chunks: list[Chunk] = []
+    section_seq = 0
+    global_index = 0
+    for element in elements:
+        if not element.content:
+            continue
+        section_seq += 1
+        pieces = _split_structured_text(element.content, max_chars)
+        offset = 0
+        for section_index, (piece, reason) in enumerate(pieces):
+            start = offset
+            offset += len(piece)
+            source_position = dict(element.source_position)
+            source_position["char_start"] = start
+            source_position["char_end"] = offset
+            canonical = json.dumps({
+                "document_id": element.document_id,
+                "version_id": element.document_version_id,
+                "source_position": source_position,
+                "content": piece,
+                "rule_version": rule_version,
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            chunk_hash = digest(canonical)
+            chunks.append(Chunk(
+                element.document_id, element.document_version_id, "chunk-" + chunk_hash[:20],
+                element.title, element.heading, piece,
+                f"local://{element.document_id}/{chunk_hash}",
+                element.metadata["tenant_id"], element.metadata["shop_id"],
+                element.disclosure_class, element.effective_from, element.effective_to,
+                section_seq, section_index, reason, chunk_hash, element.metadata,
+                source_position, rule_version,
+            ))
+            global_index += 1
     return chunks
 
 

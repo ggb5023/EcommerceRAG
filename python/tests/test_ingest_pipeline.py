@@ -1,8 +1,15 @@
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
 from zipfile import ZipFile
 
-from app.ingest.pipeline import CSVParser, DOCXParser, MarkdownParser, LocalIndex, chunk_elements
+from app.ingest.pipeline import (
+    CSVParser,
+    DOCXParser,
+    LocalIndex,
+    MarkdownParser,
+    chunk_elements,
+    chunk_elements_v2,
+)
 
 
 def metadata():
@@ -66,8 +73,14 @@ def test_adjacent_expansion_reapplies_all_scope_filters(tmp_path: Path):
                  replace(neighbor, chunk_id="internal", disclosure_class="internal_only"),
                  replace(neighbor, chunk_id="expired", effective_to="2026-02-01")]
     index = LocalIndex([hit, neighbor, *forbidden])
-    scope = dict(tenant_id="tenant-a", shop_id="shop-a", allowed_shop_ids={"shop-a"},
-                 allowed_document_ids={"doc"}, role="operator", business_date="2026-10-02")
+    scope = {
+        "tenant_id": "tenant-a",
+        "shop_id": "shop-a",
+        "allowed_shop_ids": {"shop-a"},
+        "allowed_document_ids": {"doc"},
+        "role": "operator",
+        "business_date": "2026-10-02",
+    }
     assert {r["chunk_id"] for r in index.search("目标商品", **scope)} == {hit.chunk_id}
     assert {r["chunk_id"] for r in index.search("目标商品", adjacent_window=1, **scope)} == {hit.chunk_id, neighbor.chunk_id}
     scope["allowed_document_ids"] = set()
@@ -75,3 +88,18 @@ def test_adjacent_expansion_reapplies_all_scope_filters(tmp_path: Path):
     scope["allowed_document_ids"] = {"doc"}
     index.activate("tenant-a", "doc", "v0")
     assert not index.search("目标商品", adjacent_window=1, **scope)
+
+
+def test_structured_chunks_preserve_sentence_boundaries_and_rule_version(tmp_path: Path):
+    path = tmp_path / "structured.md"
+    path.write_text("# 标题\n\n第一句说明。第二句说明！第三句说明。" + "长内容。" * 200, encoding="utf-8")
+    elements = MarkdownParser().parse(path, document_id="doc", version_id="v2", metadata=metadata())
+    chunks = chunk_elements_v2(elements, max_chars=80)
+    assert chunks
+    assert all(chunk.rule_version == "structured-v2" for chunk in chunks)
+    assert all(chunk.source_position["char_end"] > chunk.source_position["char_start"] for chunk in chunks)
+    assert any(chunk.split_reason == "sentence_boundary" for chunk in chunks)
+    assert any(chunk.split_reason == "hard_split" for chunk in chunks)
+    assert [chunk.chunk_hash for chunk in chunks] == [
+        chunk.chunk_hash for chunk in chunk_elements_v2(elements, max_chars=80)
+    ]
