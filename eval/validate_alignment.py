@@ -181,6 +181,44 @@ def _validate_mapping(
     return errors, statuses, complete, policy_statuses
 
 
+def _validate_approval_evidence(alignment: dict[str, Any], corpus_path: Path) -> list[str]:
+    """Check evidence fields emitted by the controlled approval tool."""
+    errors: list[str] = []
+    if alignment.get("status") != "APPROVED":
+        return errors
+    corpus_sha = _sha256(corpus_path)
+    if alignment.get("source_corpus_sha256") != corpus_sha:
+        errors.append("approved_source_corpus_sha256_mismatch")
+    evidence = alignment.get("case_evidence")
+    mapping = alignment.get("case_to_source_documents")
+    if not isinstance(evidence, dict):
+        errors.append("approved_case_evidence_missing")
+        return errors
+    if not isinstance(mapping, dict) or set(evidence) != set(mapping):
+        errors.append("approved_case_evidence_case_set_mismatch")
+        return errors
+    for case_id, checks in evidence.items():
+        if not isinstance(checks, list) or not checks:
+            errors.append(f"approved_case_evidence_invalid:{case_id}")
+            continue
+        for index, check in enumerate(checks, 1):
+            if not isinstance(check, dict):
+                errors.append(f"approved_case_evidence_check_invalid:{case_id}:{index}")
+                continue
+            if not isinstance(check.get("source_document_id"), str) or not check["source_document_id"]:
+                errors.append(f"approved_case_evidence_source_invalid:{case_id}:{index}")
+            chunks = check.get("evidence_chunks")
+            if not isinstance(chunks, list) or not chunks:
+                errors.append(f"approved_case_evidence_chunks_missing:{case_id}:{index}")
+            else:
+                for chunk_index, chunk in enumerate(chunks, 1):
+                    if not isinstance(chunk, dict) or not isinstance(chunk.get("chunk_id"), str) or not chunk.get("chunk_id"):
+                        errors.append(f"approved_case_evidence_chunk_invalid:{case_id}:{index}:{chunk_index}")
+                    if not isinstance(chunk.get("source_position"), dict) or not chunk["source_position"]:
+                        errors.append(f"approved_case_evidence_position_invalid:{case_id}:{index}:{chunk_index}")
+    return errors
+
+
 def validate(cases_path: Path, metadata_path: Path, corpus_path: Path, alignment_path: Path) -> dict[str, Any]:
     cases, cases_error = _load_jsonl(cases_path)
     corpus_rows, corpus_error = _load_jsonl(corpus_path)
@@ -214,6 +252,7 @@ def validate(cases_path: Path, metadata_path: Path, corpus_path: Path, alignment
 
     mapping_errors, mapping_counts, complete_count, policy_statuses = _validate_mapping(cases, corpus, alignment)
     issues.extend(mapping_errors)
+    issues.extend(_validate_approval_evidence(alignment, corpus_path))
     structural_prefixes = (
         "jsonl_input_invalid:",
         "json_input_invalid:",
@@ -225,6 +264,7 @@ def validate(cases_path: Path, metadata_path: Path, corpus_path: Path, alignment
         "alignment_status_invalid:",
         "real_service_acceptance_",
         "alignment_case_to_source_documents_not_object",
+        "approved_",
     )
     structural_errors = [issue for issue in issues if issue.startswith(structural_prefixes)]
     if structural_errors:

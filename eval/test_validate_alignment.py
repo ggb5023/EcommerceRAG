@@ -103,14 +103,21 @@ def test_pending_empty_mapping_is_diagnosed_without_approval(tmp_path: Path) -> 
 
 def test_approved_complete_mapping_passes_validation_only(tmp_path: Path) -> None:
     mapping = {f"case-{index}": {f"label-doc-{index}": f"actual-doc-{index}"} for index in range(1, 61)}
-    report = _run(
-        tmp_path,
-        {
-            "status": "APPROVED",
-            "case_to_source_documents": mapping,
-            "real_service_acceptance": False,
-        },
-    )
+    evidence = {
+        f"case-{index}": [{
+            "source_document_id": f"actual-doc-{index}",
+            "evidence_chunks": [{"chunk_id": f"chunk-{index}", "source_position": {"line_start": 1}}],
+        }]
+        for index in range(1, 61)
+    }
+    paths = _write_inputs(tmp_path, {
+        "status": "APPROVED", "case_to_source_documents": mapping,
+        "real_service_acceptance": False, "case_evidence": evidence,
+    })
+    alignment = json.loads(paths[3].read_text())
+    alignment["source_corpus_sha256"] = hashlib.sha256(paths[2].read_bytes()).hexdigest()
+    paths[3].write_text(json.dumps(alignment), encoding="utf-8")
+    report = _run_paths(tmp_path, paths)
     assert report["status"] == "PASS"
     assert report["mapped_case_count"] == 60
     assert report["issues"] == []
@@ -124,6 +131,8 @@ def test_scope_mismatch_is_not_approved(tmp_path: Path) -> None:
             "status": "APPROVED",
             "case_to_source_documents": mapping,
             "real_service_acceptance": False,
+            "source_corpus_sha256": "0" * 64,
+            "case_evidence": {},
         },
     )
     documents = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines()]
@@ -138,7 +147,7 @@ def test_scope_mismatch_is_not_approved(tmp_path: Path) -> None:
         check=False,
     )
     report = json.loads(output.read_text(encoding="utf-8"))
-    assert report["status"] == "PENDING_REVIEW"
+    assert report["status"] == "FAIL"
     assert any("source_document_scope_mismatch" in issue for issue in report["issues"])
 
 
@@ -192,3 +201,41 @@ def test_missing_source_position_is_fail(tmp_path: Path) -> None:
     report = _run_paths(tmp_path, paths)
     assert report["status"] == "FAIL"
     assert "corpus_chunk_source_position_invalid:actual-doc-1:1" in report["issues"]
+
+
+def test_approved_artifact_requires_bound_evidence(tmp_path: Path) -> None:
+    mapping = {f"case-{index}": {f"label-doc-{index}": f"actual-doc-{index}"} for index in range(1, 61)}
+    report = _run(
+        tmp_path,
+        {
+            "status": "APPROVED",
+            "case_to_source_documents": mapping,
+            "real_service_acceptance": False,
+            "source_corpus_sha256": "0" * 64,
+            "case_evidence": {},
+        },
+    )
+    assert report["status"] == "FAIL"
+    assert "approved_source_corpus_sha256_mismatch" in report["issues"]
+    assert "approved_case_evidence_missing" not in report["issues"]
+
+
+def test_approved_evidence_chunk_position_is_required(tmp_path: Path) -> None:
+    mapping = {f"case-{index}": {f"label-doc-{index}": f"actual-doc-{index}"} for index in range(1, 61)}
+    evidence = {
+        f"case-{index}": [{
+            "source_document_id": f"actual-doc-{index}",
+            "evidence_chunks": [{"chunk_id": f"chunk-{index}", "source_position": {"line_start": 1}}],
+        }]
+        for index in range(1, 61)
+    }
+    paths = _write_inputs(tmp_path, {
+        "status": "APPROVED", "case_to_source_documents": mapping,
+        "real_service_acceptance": False, "case_evidence": evidence,
+    })
+    alignment = json.loads(paths[3].read_text())
+    alignment["source_corpus_sha256"] = hashlib.sha256(paths[2].read_bytes()).hexdigest()
+    paths[3].write_text(json.dumps(alignment), encoding="utf-8")
+    report = _run_paths(tmp_path, paths)
+    assert report["status"] == "PASS"
+    assert report["issues"] == []
