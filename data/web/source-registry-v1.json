@@ -1,0 +1,76 @@
+{
+  "registry_version": "source-registry-v1",
+  "generated_at": "2026-10-04",
+  "real_service_acceptance": false,
+  "storage_policy": "Versioned metadata only; raw web snapshots remain outside Git in restricted storage.",
+  "sources": [
+    {
+      "source_id": "raspberrypi-official-docs",
+      "status": "pending_review",
+      "source_kind": "manufacturer",
+      "base_domains": ["datasheets.raspberrypi.com", "www.raspberrypi.com"],
+      "allowed_paths": ["/pico", "/rp2040", "/picow", "/rp2350", "/cm4", "/rpi4", "/rpi5", "/camera"],
+      "denied_paths": ["/login", "/account", "/checkout"],
+      "discovery_mode": "fixed_urls",
+      "fixed_urls": [],
+      "terms_review": {
+        "status": "pending",
+        "review_url": "https://www.raspberrypi.com/documentation/",
+        "reviewed_at": null,
+        "reviewer": null,
+        "allowed_persistence": null,
+        "license_ref": null
+      },
+      "robots_policy": {
+        "required": true,
+        "status": "pending",
+        "checked_at": null,
+        "revision": null
+      },
+      "refresh_policy": {
+        "trigger": "manual",
+        "interval_hours": null,
+        "max_age_days": null,
+        "budget_requests": null
+      },
+      "content_policy": "pending_review",
+      "authorization": "pending",
+      "owner": "data_owner",
+      "policy_version": "source-policy-v1"
+    },
+    {
+      "source_id": "tavily-discovery-candidates",
+      "status": "pending_review",
+      "source_kind": "external_search",
+      "base_domains": [],
+      "allowed_paths": ["/"],
+      "denied_paths": ["/login", "/account", "/checkout"],
+      "discovery_mode": "fixed_urls",
+      "fixed_urls": [],
+      "terms_review": {
+        "status": "not_applicable",
+        "review_url": null,
+        "reviewed_at": null,
+        "reviewer": null,
+        "allowed_persistence": false,
+        "license_ref": null
+      },
+      "robots_policy": {
+        "required": true,
+        "status": "pending",
+        "checked_at": null,
+        "revision": null
+      },
+      "refresh_policy": {
+        "trigger": "manual",
+        "interval_hours": null,
+        "max_age_days": null,
+        "budget_requests": null
+      },
+      "content_policy": "no_persistence",
+      "authorization": "provider_only",
+      "owner": "engineering",
+      "policy_version": "source-policy-v1"
+    }
+  ]
+}
