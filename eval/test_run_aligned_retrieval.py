@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +49,15 @@ def _run(
         encoding="utf-8",
     )
     alignment_path = tmp_path / "alignment.json"
+    had_evidence = "case_evidence" in alignment
+    if alignment.get("status") == "APPROVED" and had_evidence and "source_corpus_sha256" not in alignment:
+        source_id = next(iter((alignment.get("case_to_source_documents") or {}).get(cases[0]["case_id"], {}).values()), "actual-doc-v1")
+        alignment["case_evidence"] = {
+            case["case_id"]: [{"source_document_id": source_id, "evidence_chunks": [{"chunk_id": "chunk-1", "source_position": {"line_start": 1}}]}]
+            for case in cases
+        }
+    if alignment.get("status") == "APPROVED" and had_evidence:
+        alignment["source_corpus_sha256"] = hashlib.sha256(corpus_path.read_bytes()).hexdigest()
     alignment_path.write_text(json.dumps(alignment), encoding="utf-8")
     report_path = tmp_path / "report.json"
     completed = subprocess.run(
@@ -94,11 +104,26 @@ def test_explicit_mapping_measures_actual_source_document(tmp_path: Path) -> Non
             "status": "APPROVED",
             "case_to_source_documents": {"case-1": {"label-doc": "actual-doc-v1"}},
             "real_service_acceptance": False,
+            "source_corpus_sha256": "0" * 64,
+            "case_evidence": {"case-1": [{"source_document_id": "actual-doc-v1", "evidence_chunks": [{"chunk_id": "chunk-1", "source_position": {"line_start": 1}}]}]},
         },
     )
     assert report["status"] == "PASS"
     assert report["measured_case_count"] == 1
     assert report["metrics"]["recall_at_5"] == 1.0
+
+
+def test_tampered_approved_evidence_never_measures(tmp_path: Path) -> None:
+    report = _run(tmp_path, {
+        "status": "APPROVED",
+        "case_to_source_documents": {"case-1": {"label-doc": "actual-doc-v1"}},
+        "real_service_acceptance": False,
+        "source_corpus_sha256": "0" * 64,
+        "case_evidence": {},
+    })
+    assert report["status"] == "NOT_RUN"
+    assert report["measured_case_count"] == 0
+    assert "approved_case_evidence_case_set_mismatch" in report["issues"]
 
 
 def test_approved_empty_mapping_stays_not_run(tmp_path: Path) -> None:

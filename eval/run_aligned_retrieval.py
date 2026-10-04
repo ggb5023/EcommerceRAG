@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 from alignment_policy import assess_document
+from alignment_artifact import approved_artifact_issues
 
 
 def tokens(value: str) -> set[str]:
@@ -147,6 +148,12 @@ def main() -> int:
     if not isinstance(mapping, dict):
         issues.append("alignment_case_to_source_documents_not_object")
         mapping = {}
+    if approved:
+        approval_issues = approved_artifact_issues(alignment, args.corpus, {case.get("case_id") for case in cases})
+        issues.extend(approval_issues)
+        if approval_issues:
+            approved = False
+            input_invalid = True
     input_invalid = bool(alignment_error or duplicate_corpus_ids or "alignment_case_to_source_documents_not_object" in issues)
     if not approved:
         status = alignment.get("status") if isinstance(alignment, dict) else None
