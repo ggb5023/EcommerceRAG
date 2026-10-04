@@ -3,9 +3,48 @@ import json
 import sys
 from pathlib import Path
 
+# The tests are also invoked directly without installing the repository package.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# isort: off
 from scripts.process_mineru_result import process
 from scripts.run_mineru_report import completed_results
+from scripts.validate_mineru_artifacts import validate
+# isort: on
+
+GOLDEN_CONTENT = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "mineru" / "golden" / "content_list.json"
+
+
+def _build_integrity_fixture(tmp_path: Path, *, include_integrity: bool = True) -> Path:
+    root = tmp_path / "real-docs"
+    raw = root / "raw" / "fixture.pdf"
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"%PDF-1.7\nsynthetic golden input\n")
+    input_hash = hashlib.sha256(raw.read_bytes()).hexdigest()
+    (root / "manifest.json").write_text(json.dumps({"sources": [{
+        "document_id": "golden-doc", "file_name": raw.name,
+        "sha256": input_hash,
+    }]}, ensure_ascii=False), encoding="utf-8")
+
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "content_list.json").write_bytes(GOLDEN_CONTENT.read_bytes())
+    task_id = "golden-task"
+    result_hash = hashlib.sha256(b"golden-result-archive").hexdigest()
+    process_kwargs = {
+        "root": artifact, "document_id": "golden-doc", "version_id": "v1",
+        "output_root": root, "tenant_id": "lab", "shop_id": "shop",
+        "task_id": task_id,
+    }
+    if include_integrity:
+        process_kwargs.update({"input_pdf_sha256": input_hash, "result_sha256": result_hash})
+    process(**process_kwargs)
+    task_dir = root / "task-artifacts" / task_id
+    task_dir.mkdir(parents=True)
+    (task_dir / "meta.json").write_text(json.dumps({
+        "task_id": task_id, "status": "PASS", "result_sha256": result_hash,
+        "result_size_bytes": len(b"golden-result-archive"), "artifact_root": str(task_dir),
+    }), encoding="utf-8")
+    return root
 
 
 def test_process_mineru_result_is_repeatable_and_keeps_raw_input_hash(tmp_path: Path):
@@ -116,3 +155,37 @@ def test_report_does_not_guess_task_id_when_multiple_tasks_exist(tmp_path: Path)
     }), encoding="utf-8")
 
     assert completed_results(tmp_path) == {}
+
+
+def test_golden_mineru_artifacts_have_consistent_integrity_bindings(tmp_path: Path):
+    report = validate(_build_integrity_fixture(tmp_path))
+    assert report["summary"] == {"documents": 1, "PASS": 1, "LEGACY_UNVERIFIED": 0, "FAIL": 0}
+    row = report["documents"][0]
+    assert row["input_pdf_sha256"]
+    assert row["chunk_count"] == 3
+    assert row["errors"] == []
+
+
+def test_mineru_integrity_validator_rejects_tampered_result_and_chunk(tmp_path: Path):
+    root = _build_integrity_fixture(tmp_path)
+    parsed = next((root / "parsed").glob("*/*/meta.json"))
+    metadata = json.loads(parsed.read_text(encoding="utf-8"))
+    metadata["result_sha256"] = "0" * 64
+    parsed.write_text(json.dumps(metadata), encoding="utf-8")
+    chunk_path = root / metadata["chunk_path"]
+    chunk_path.write_text(chunk_path.read_text(encoding="utf-8") + "{\"document_id\":\"wrong\"}\n", encoding="utf-8")
+
+    report = validate(root)
+    row = report["documents"][0]
+    assert row["status"] == "FAIL"
+    assert "result_sha256_mismatch" in row["errors"]
+    assert "chunk_document_id_mismatch:4" in row["errors"]
+    assert "chunk_count_mismatch" in row["errors"]
+
+
+def test_legacy_mineru_metadata_is_not_reported_as_full_pass(tmp_path: Path):
+    report = validate(_build_integrity_fixture(tmp_path, include_integrity=False))
+    row = report["documents"][0]
+    assert row["status"] == "LEGACY_UNVERIFIED"
+    assert "input_pdf_sha256_missing" in row["warnings"]
+    assert "result_sha256_missing" in row["warnings"]

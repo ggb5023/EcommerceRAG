@@ -1,0 +1,25 @@
+[
+  {
+    "type": "heading",
+    "text": "合成解析夹具",
+    "text_level": 1,
+    "page_no": 1
+  },
+  {
+    "type": "text",
+    "text": "该内容只用于 MinerU 统一元素和引用位置测试。",
+    "page_no": 1,
+    "bbox": [10, 20, 300, 45]
+  },
+  {
+    "type": "table",
+    "table_body": [["字段", "值"], ["状态", "fixture-only"]],
+    "page_no": 2,
+    "table_caption": "合成表格"
+  },
+  {
+    "type": "image",
+    "image_refs": ["images/fixture.png"],
+    "page_no": 2
+  }
+]

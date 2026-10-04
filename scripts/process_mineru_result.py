@@ -50,6 +50,14 @@ def _validate_component(value: str, name: str) -> str:
     return value
 
 
+def _validate_sha256(value: str | None, name: str) -> str | None:
+    if value is None:
+        return None
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise ValueError(f"invalid_{name}")
+    return value
+
+
 def _element_text(item: dict[str, Any]) -> str:
     """Create deterministic text for structured elements that have no text field."""
     text = str(item.get("text") or "").strip()
@@ -89,11 +97,14 @@ def _write_atomic(path: Path, data: str) -> None:
 
 def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
             tenant_id: str, shop_id: str, max_chars: int = 700,
-            task_id: str | None = None) -> dict[str, Any]:
+            task_id: str | None = None, input_pdf_sha256: str | None = None,
+            result_sha256: str | None = None) -> dict[str, Any]:
     document_id = _validate_component(document_id, "document_id")
     version_id = _validate_component(version_id, "version_id")
     if task_id is not None:
         task_id = _validate_component(task_id, "task_id")
+    input_pdf_sha256 = _validate_sha256(input_pdf_sha256, "input_pdf_sha256")
+    result_sha256 = _validate_sha256(result_sha256, "result_sha256")
     if max_chars <= 0:
         raise ValueError("max_chars must be positive")
     raw, raw_sha256 = _load_content_list(root)
@@ -172,10 +183,16 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
         "image_count": sum(item["type"] == "image" for item in normalized),
         "warning_count": sum(bool(item.get("warning")) for item in normalized),
         "chunk_rule_version": chunks[0].rule_version if chunks else "structured-v2",
+        "parsed_artifact_path": str(parsed_dir.relative_to(output_root)),
+        "chunk_path": str(chunk_path.relative_to(output_root)),
         "real_service_acceptance": False,
     }
     if task_id is not None:
         meta["task_id"] = task_id
+    if input_pdf_sha256 is not None:
+        meta["input_pdf_sha256"] = input_pdf_sha256
+    if result_sha256 is not None:
+        meta["result_sha256"] = result_sha256
     _write_atomic(parsed_dir / "meta.json", json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
     return meta
 
@@ -190,12 +207,16 @@ def main() -> int:
     parser.add_argument("--shop-id", default="unassigned")
     parser.add_argument("--max-chars", type=int, default=700)
     parser.add_argument("--task-id")
+    parser.add_argument("--input-pdf-sha256")
+    parser.add_argument("--result-sha256")
     args = parser.parse_args()
     try:
         report = process(args.artifact_dir, document_id=args.document_id, version_id=args.version_id,
                          output_root=args.output_root, tenant_id=args.tenant_id,
                          shop_id=args.shop_id, max_chars=args.max_chars,
-                         task_id=args.task_id)
+                         task_id=args.task_id,
+                         input_pdf_sha256=args.input_pdf_sha256,
+                         result_sha256=args.result_sha256)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "FAILED", "error_code": str(error), "real_service_acceptance": False}))
         return 1

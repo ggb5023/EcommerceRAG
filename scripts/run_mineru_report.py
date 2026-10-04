@@ -10,6 +10,11 @@ import shutil
 import tempfile
 from pathlib import Path
 
+try:
+    from scripts.validate_mineru_artifacts import validate
+except ModuleNotFoundError:  # direct ``python scripts/run_mineru_report.py``
+    from validate_mineru_artifacts import validate
+
 PDF_ROOT = Path("/var/lib/ecommerce-rag/real-docs/real-docs-v1")
 
 
@@ -64,6 +69,12 @@ def main() -> int:
     pdfinfo = shutil.which("pdfinfo")
     manifest = read_json(args.root / "manifest.json")
     completed = completed_results(args.root)
+    integrity = validate(args.root)
+    integrity_by_document = {
+        row.get("document_id"): row
+        for row in integrity.get("documents", [])
+        if isinstance(row, dict) and isinstance(row.get("document_id"), str)
+    }
     rows = []
     for path in sorted((args.root / "raw").glob("*.pdf")):
         header = path.open("rb").read(5)
@@ -77,6 +88,7 @@ def main() -> int:
                        if isinstance(item, dict) and item.get("file_name") == path.name), {})
         document_id = source.get("document_id")
         parsed = completed.get(document_id, {}) if isinstance(document_id, str) else {}
+        integrity_row = integrity_by_document.get(document_id, {}) if isinstance(document_id, str) else {}
         if parsed.get("status") == "PASS" and parsed.get("chunk_count") is not None:
             status, reason = "PASS", None
         rows.append({
@@ -93,11 +105,15 @@ def main() -> int:
             "warning_count": parsed.get("warning_count"),
             "chunk_rule_version": parsed.get("chunk_rule_version"),
             "artifact_root": parsed.get("artifact_root"),
+            "artifact_integrity_status": integrity_row.get("status"),
+            "artifact_integrity_errors": integrity_row.get("errors", []),
+            "artifact_integrity_warnings": integrity_row.get("warnings", []),
         })
     report = {
         "report_version": "mineru-run-v1", "input_root": str(args.root / "raw"),
         "environment": {"mineru": mineru, "pdfinfo": pdfinfo},
         "real_service_acceptance": False, "documents": rows,
+        "artifact_consistency": integrity["summary"],
     }
     out = args.root / "reports" / "mineru-run.json"
     out.parent.mkdir(parents=True, exist_ok=True)
