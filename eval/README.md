@@ -127,6 +127,13 @@ the current evidence wording, and explicit options to narrow the claim, add
 traceable source evidence, or keep the row unresolved. It never edits the
 evaluation JSONL, review checklist, source corpus, or `alignment.json`; a
 revised evaluation input must receive a new version and SHA-256.
+
+`approve_alignment.py` is the separate explicit approval gate. It requires a
+`PENDING_REVIEW` proposal, an exact proposal hash in the review checklist,
+zero `pending`/`needs_revision`/`rejected` rows, and unchanged evidence fields.
+Only `--approve` writes a new artifact, atomically and without overwriting an
+existing file. It refuses the current provisional 59/1 review and never
+modifies `alignment.json` or the immutable evaluation input.
 Authorization fields are checked for tenant, shop, and role completeness;
 unauthorized cases must retain a target evidence/document reference. The
 synthetic set models an unauthorized request with a normal operator context,
