@@ -42,6 +42,8 @@ def build_documents(chunks: Iterable[object]) -> dict[str, dict[str, object]]:
     """
     documents: dict[str, dict[str, object]] = {}
     for chunk in chunks:
+        chunk_metadata = getattr(chunk, "metadata", {})
+        source_sha256 = chunk_metadata.get("sha256") if isinstance(chunk_metadata, dict) else None
         document = documents.setdefault(
             chunk.document_id,
             {
@@ -54,6 +56,7 @@ def build_documents(chunks: Iterable[object]) -> dict[str, dict[str, object]]:
                 "effective_to": chunk.effective_to,
                 "source_type": "synthetic-local-source",
                 "source_version": "ecommerce-demo-v1",
+                "source_sha256": source_sha256,
                 "chunks": [],
             },
         )
@@ -61,6 +64,7 @@ def build_documents(chunks: Iterable[object]) -> dict[str, dict[str, object]]:
             document["disclosure_class"] != chunk.disclosure_class
             or document["effective_from"] != chunk.effective_from
             or document["effective_to"] != chunk.effective_to
+            or document["source_sha256"] != source_sha256
         ):
             raise ValueError(f"inconsistent policy metadata for {chunk.document_id}")
         document["chunks"].append(_json_chunk(chunk))

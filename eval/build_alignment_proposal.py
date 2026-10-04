@@ -17,7 +17,6 @@ from typing import Any
 
 import yaml
 
-
 ALLOWED_STATUS = "PENDING_REVIEW"
 ALLOWED_DISCLOSURE_CLASSES = {"external_allowed", "internal_only", "unclassified"}
 
@@ -33,7 +32,7 @@ def _load_cases(path: Path) -> list[dict[str, Any]]:
             continue
         value = json.loads(line)
         if not isinstance(value, dict):
-            raise ValueError(f"case line {line_number} is not an object")
+            raise TypeError(f"case line {line_number} is not an object")
         rows.append(value)
     return rows
 
@@ -41,7 +40,7 @@ def _load_cases(path: Path) -> list[dict[str, Any]]:
 def _load_manifest(path: Path) -> list[dict[str, Any]]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or not isinstance(value.get("documents"), list):
-        raise ValueError("source manifest must contain a documents list")
+        raise TypeError("source manifest must contain a documents list")
     documents = value["documents"]
     if not all(isinstance(document, dict) for document in documents):
         raise ValueError("source manifest documents must be objects")
@@ -52,7 +51,7 @@ def _parse_date(value: Any) -> date | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError(f"invalid date value: {value!r}")
+        raise TypeError(f"invalid date value: {value!r}")
     return date.fromisoformat(value)
 
 
@@ -86,9 +85,26 @@ def _risk_reasons(document: dict[str, Any], authorization: dict[str, Any], date_
     return reasons
 
 
-def build_proposal(cases_path: Path, manifest_path: Path) -> dict[str, Any]:
+def _load_corpus(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    corpus: dict[str, dict[str, Any]] = {}
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not raw.strip():
+            continue
+        value = json.loads(raw)
+        if not isinstance(value, dict) or not isinstance(value.get("document_id"), str):
+            raise TypeError(f"corpus line {line_number} is not a document object")
+        if value["document_id"] in corpus:
+            raise ValueError(f"duplicate corpus document_id: {value['document_id']}")
+        corpus[value["document_id"]] = value
+    return corpus
+
+
+def build_proposal(cases_path: Path, manifest_path: Path, corpus_path: Path | None = None) -> dict[str, Any]:
     cases = _load_cases(cases_path)
     documents = _load_manifest(manifest_path)
+    corpus = _load_corpus(corpus_path)
     by_expected: dict[str, dict[str, Any]] = {}
     duplicate_expected: set[str] = set()
     for document in documents:
@@ -131,6 +147,8 @@ def build_proposal(cases_path: Path, manifest_path: Path) -> dict[str, Any]:
                 continue
             source_id = document["document_id"]
             case_mapping[expected_id] = source_id
+            corpus_document = corpus.get(source_id, {})
+            corpus_chunks = corpus_document.get("chunks", []) if isinstance(corpus_document, dict) else []
             scope_match = (
                 document.get("tenant_id") == authorization.get("tenant_id")
                 and document.get("shop_id") == authorization.get("shop_id")
@@ -141,6 +159,16 @@ def build_proposal(cases_path: Path, manifest_path: Path) -> dict[str, Any]:
                 {
                     "expected_doc_id": expected_id,
                     "source_document_id": source_id,
+                    "document_version_id": corpus_document.get("document_version_id") or document.get("document_version_id"),
+                    "source_version": corpus_document.get("source_version") or "ecommerce-demo-v1",
+                    "source_sha256": corpus_document.get("source_sha256") or document.get("sha256"),
+                    "evidence_chunks": [
+                        {
+                            "chunk_id": chunk.get("chunk_id"),
+                            "source_position": chunk.get("source_position"),
+                        }
+                        for chunk in corpus_chunks if isinstance(chunk, dict)
+                    ],
                     "scope_match": scope_match,
                     "date_state": date_state,
                     "disclosure_class": document.get("disclosure_class")
@@ -183,6 +211,7 @@ def build_proposal(cases_path: Path, manifest_path: Path) -> dict[str, Any]:
         "eval_set_version": "synthetic-m2-v1",
         "cases_sha256": _sha256(cases_path),
         "source_manifest_sha256": _sha256(manifest_path),
+        "source_corpus_sha256": _sha256(corpus_path) if corpus_path else None,
         "case_count": len(cases),
         "source_document_count": len(documents),
         "mapped_case_count": len(mapping),
@@ -193,7 +222,7 @@ def build_proposal(cases_path: Path, manifest_path: Path) -> dict[str, Any]:
             "risk_counts": dict(sorted(risk_counts.items())),
             "review_required": risk_case_count > 0,
         },
-        "issues": sorted(set(issues)),
+        "issues": sorted(set(issues) | ({"evidence_chunks_unavailable"} if corpus_path is None else set())),
         "real_service_acceptance": False,
         "review_notes": "Mapping is a deterministic proposal only. Review source content, scope, disclosure and business-date behavior before changing status to APPROVED.",
     }
@@ -204,9 +233,10 @@ def main() -> int:
     root = Path(__file__).resolve().parent
     parser.add_argument("--cases", type=Path, default=root / "synthetic_cases.jsonl")
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--corpus", type=Path, help="optional JSONL corpus for chunk position evidence")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    proposal = build_proposal(args.cases, args.manifest)
+    proposal = build_proposal(args.cases, args.manifest, args.corpus)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(proposal, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: proposal[key] for key in ("status", "case_count", "source_document_count", "mapped_case_count", "issues", "real_service_acceptance")}, ensure_ascii=False))

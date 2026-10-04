@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -28,7 +29,7 @@ def _sha256(path: Path) -> str:
 def _load_object(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
-        raise ValueError(f"{path} must contain a JSON object")
+        raise TypeError(f"{path} must contain a JSON object")
     return value
 
 
@@ -48,12 +49,12 @@ def _evidence(check: dict[str, Any]) -> dict[str, Any]:
 def build_checklist(proposal: dict[str, Any], proposal_path: Path) -> dict[str, Any]:
     checks = proposal.get("case_checks")
     if not isinstance(checks, list):
-        raise ValueError("proposal.case_checks must be a list")
+        raise TypeError("proposal.case_checks must be a list")
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for check in checks:
         if not isinstance(check, dict) or not isinstance(check.get("case_id"), str):
-            raise ValueError("proposal contains an invalid case check")
+            raise TypeError("proposal contains an invalid case check")
         case_id = check["case_id"]
         if case_id in seen:
             raise ValueError(f"duplicate case_id: {case_id}")
@@ -138,18 +139,63 @@ def validate_checklist(proposal: dict[str, Any], proposal_path: Path, review: di
     }
 
 
+def apply_decisions(
+    proposal: dict[str, Any],
+    proposal_path: Path,
+    review: dict[str, Any],
+    decisions: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply an explicit, complete decision set without changing evidence."""
+    checks = proposal.get("case_checks") if isinstance(proposal.get("case_checks"), list) else []
+    expected = {check.get("case_id") for check in checks if isinstance(check, dict)}
+    if set(decisions) != expected:
+        raise TypeError("decision case_id set must exactly match proposal")
+    updated = copy.deepcopy(review)
+    rows = updated.get("rows")
+    if not isinstance(rows, list):
+        raise TypeError("review.rows must be a list")
+    for row in rows:
+        case_id = row.get("case_id") if isinstance(row, dict) else None
+        decision = decisions.get(case_id)
+        if isinstance(decision, str):
+            status, notes = decision, ""
+        elif isinstance(decision, dict):
+            status, notes = decision.get("review_status"), decision.get("review_notes", "")
+        else:
+            raise TypeError(f"invalid decision for {case_id}")
+        if status not in ALLOWED_STATUSES or not isinstance(notes, str):
+            raise TypeError(f"invalid decision for {case_id}")
+        if status in {"needs_revision", "rejected"} and not notes.strip():
+            raise ValueError(f"review notes required for {case_id}")
+        row["review_status"] = status
+        row["review_notes"] = notes
+    counts = collections.Counter(row["review_status"] for row in rows)
+    updated["review_status_counts"] = dict(sorted(counts.items()))
+    updated["status"] = "REVIEWED" if counts == {"approved": len(rows)} else "PENDING_REVIEW"
+    updated["proposal_sha256"] = _sha256(proposal_path)
+    return updated
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--proposal", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--review", type=Path)
     parser.add_argument("--generate", action="store_true", help="write a new pending checklist")
+    parser.add_argument("--apply-decisions", type=Path, help="apply a complete decision JSON to --review")
     args = parser.parse_args()
     proposal = _load_object(args.proposal)
     if args.generate:
         if args.output.exists():
             raise SystemExit(f"refusing to overwrite existing review file: {args.output}")
         report = build_checklist(proposal, args.proposal)
+    elif args.apply_decisions:
+        if args.review is None:
+            raise SystemExit("--review is required with --apply-decisions")
+        review = _load_object(args.review)
+        decisions = _load_object(args.apply_decisions)
+        review = apply_decisions(proposal, args.proposal, review, decisions)
+        report = review
     else:
         if args.review is None:
             raise SystemExit("--review is required unless --generate is set")
@@ -157,6 +203,10 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: report[key] for key in ("status", "case_count", "review_status_counts", "unresolved_count") if key in report}, ensure_ascii=False))
+    if args.apply_decisions:
+        validation = validate_checklist(proposal, args.proposal, report)
+        print(json.dumps({key: validation[key] for key in ("status", "case_count", "review_status_counts", "unresolved_count")}, ensure_ascii=False))
+        return 0 if validation["status"] in {"PENDING_REVIEW", "REVIEWED"} else 1
     return 0 if report["status"] in {"PENDING_REVIEW", "REVIEWED"} else 1
 
 

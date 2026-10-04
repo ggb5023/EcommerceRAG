@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
@@ -75,3 +74,25 @@ def test_invalid_case_id_or_status_fails_without_crashing(tmp_path: Path) -> Non
     assert report["status"] == "FAIL"
     assert "review_case_id_invalid" in report["issues"]
     assert any(issue.startswith("review_status_invalid:") for issue in report["issues"])
+
+
+def test_apply_decisions_preserves_evidence_and_requires_complete_set(tmp_path: Path) -> None:
+    path, proposal = _proposal(tmp_path)
+    checklist = review_alignment.build_checklist(proposal, path)
+    updated = review_alignment.apply_decisions(
+        proposal,
+        path,
+        checklist,
+        {"case-1": {"review_status": "needs_revision", "review_notes": "source wording is narrower"}},
+    )
+    assert updated["rows"][0]["expected_doc_ids"] == ["label-doc"]
+    assert updated["rows"][0]["review_status"] == "needs_revision"
+    assert updated["review_status_counts"] == {"needs_revision": 1}
+    assert updated["status"] == "PENDING_REVIEW"
+    assert review_alignment.validate_checklist(proposal, path, updated)["status"] == "PENDING_REVIEW"
+    try:
+        review_alignment.apply_decisions(proposal, path, checklist, {})
+    except TypeError as error:
+        assert "exactly match" in str(error)
+    else:
+        raise AssertionError("incomplete decisions must fail")
