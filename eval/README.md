@@ -98,9 +98,21 @@ input hash, corpus document and chunk identity, mapping keys and source IDs,
 tenant/shop scope, and effective-date fields. It reports
 `PASS`, `PENDING_REVIEW`, or `FAIL` and never changes `alignment.json`, approves
 a mapping, copies case text into the corpus, or calculates retrieval metrics.
-The current demo corpus has an empty pending mapping, so its report remains
-`PENDING_REVIEW` with `alignment_pending_review` and
-`alignment_mapping_empty`.
+The independent `ecommerce-m2-aligned-v1` corpus contains 37 synthetic,
+provisional documents and a 60-case review-only proposal. Its proposal and
+validation reports are kept outside the repository under
+`/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned-provisional/`; the
+proposal remains `PENDING_REVIEW` until a responsible reviewer confirms each
+source mapping.
+
+`alignment_policy.py` is the shared disclosure and effective-date policy
+check. Each source chunk must declare `external_allowed`, `internal_only`, or
+`unclassified`, plus tenant/shop scope and effective dates. Operator access to
+internal or unclassified material, expired material, and not-yet-effective
+material is reported separately. `run_aligned_retrieval.py` counts a policy
+refusal only when the case explicitly expects an unauthorized or unanswerable
+result; ordinary Recall/MRR/nDCG never includes a refused case, and an
+unexpected policy block keeps the run `NOT_RUN`.
 Authorization fields are checked for tenant, shop, and role completeness;
 unauthorized cases must retain a target evidence/document reference. The
 synthetic set models an unauthorized request with a normal operator context,
