@@ -12,6 +12,7 @@ restart_script=${INGEST_WORKER_RESTART_SCRIPT:-}
 job_id=${INGEST_WORKER_JOB_ID:-}
 shop_id=${INGEST_WORKER_SHOP_ID:-demo-shop-east}
 old_pid=${INGEST_WORKER_PID:-}
+process_marker=${INGEST_WORKER_PROCESS_MARKER:-gateway}
 lease_wait=${INGEST_WORKER_LEASE_WAIT_SECONDS:-50}
 restart_timeout=${INGEST_WORKER_RESTART_TIMEOUT_SECONDS:-30}
 settle_timeout=${INGEST_WORKER_SETTLE_TIMEOUT_SECONDS:-90}
@@ -36,6 +37,7 @@ esac
 [[ -n "$job_id" ]] || not_run "INGEST_WORKER_JOB_ID is not set"
 [[ -f "$pid_file" ]] || not_run "worker PID file does not exist"
 [[ -x "$restart_script" ]] || not_run "restart script is not executable"
+[[ -n "$process_marker" ]] || not_run "INGEST_WORKER_PROCESS_MARKER is empty"
 
 read_pid() {
   local value
@@ -48,7 +50,12 @@ if [[ -z "$old_pid" ]]; then
   old_pid=$(read_pid)
 fi
 [[ "$old_pid" =~ ^[0-9]+$ ]] || fail "INGEST_WORKER_PID is not numeric"
+if [[ "$old_pid" == "1" || "$old_pid" == "$$" || "$old_pid" == "$PPID" ]]; then
+  not_run "refusing to kill PID 1, the harness, or its parent"
+fi
 kill -0 "$old_pid" 2>/dev/null || not_run "worker process is not running"
+cmdline=$(tr '\0' ' ' < "/proc/$old_pid/cmdline" 2>/dev/null || true)
+[[ "$cmdline" == *"$process_marker"* ]] || not_run "worker PID does not match INGEST_WORKER_PROCESS_MARKER"
 
 request_json() {
   local path=$1
