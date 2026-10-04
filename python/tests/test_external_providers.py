@@ -3,7 +3,9 @@ import io
 import json
 import stat
 import zipfile
+from typing import ClassVar
 
+from app.providers import mineru as mineru_module
 from app.providers.mineru import (
     HTTPResponse,
     MinerUClient,
@@ -12,7 +14,6 @@ from app.providers.mineru import (
     safe_extract_zip,
     sha256_bytes,
 )
-from app.providers import mineru as mineru_module
 from app.providers.tavily import HTTPResponse as TavilyHTTPResponse
 from app.providers.tavily import TavilyConfig, TavilyProvider
 
@@ -80,7 +81,7 @@ def test_mineru_result_download_rejects_unsafe_urls():
 def test_mineru_urllib_transport_enforces_streaming_limit(monkeypatch):
     class Response:
         status = 200
-        headers = {"Content-Type": "application/zip"}
+        headers: ClassVar[dict[str, str]] = {"Content-Type": "application/zip"}
 
         def __init__(self):
             self.parts = iter((b"1234", b"56"))
@@ -107,7 +108,7 @@ def test_mineru_urllib_transport_enforces_streaming_limit(monkeypatch):
 def test_mineru_urllib_transport_rejects_declared_oversize_before_read(monkeypatch):
     class Response:
         status = 200
-        headers = {"Content-Length": "10"}
+        headers: ClassVar[dict[str, str]] = {"Content-Length": "10"}
         read_called = False
 
         def __enter__(self):
