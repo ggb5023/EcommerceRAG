@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -446,6 +447,28 @@ func leaseInterval(duration time.Duration) string {
 	return fmt.Sprintf("%d seconds", int(duration.Seconds()))
 }
 
+// ingestWorkerTestHold creates a deterministic window for the process-level
+// crash rehearsal. It is deliberately available only under APP_ENV=test and
+// is ignored everywhere else so production and normal development cannot be
+// slowed by a test-only setting.
+func ingestWorkerTestHold(ctx context.Context) error {
+	if os.Getenv("APP_ENV") != "test" {
+		return nil
+	}
+	raw := strings.TrimSpace(os.Getenv("INGEST_WORKER_TEST_HOLD_MS"))
+	if raw == "" {
+		return nil
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms < 1 || ms > 120000 {
+		return fmt.Errorf("INGEST_WORKER_TEST_HOLD_MS must be an integer from 1 to 120000")
+	}
+	if workerWait(ctx, time.Duration(ms)*time.Millisecond) {
+		return nil
+	}
+	return ctx.Err()
+}
+
 func (g *gateway) processIngestClaim(parent context.Context, claim *ingestClaim) (string, error) {
 	parseCtx, cancelParse := context.WithCancel(parent)
 	renewCtx, cancelRenew := context.WithCancel(parent)
@@ -472,6 +495,11 @@ func (g *gateway) processIngestClaim(parent context.Context, claim *ingestClaim)
 			}
 		}
 	}()
+	if err := ingestWorkerTestHold(parent); err != nil {
+		cancelRenew()
+		<-renewDone
+		return "test_hold_failed", err
+	}
 
 	files := make([]*ragv1.PackageFile, 0, len(claim.Files))
 	for _, file := range claim.Files {
