@@ -131,12 +131,18 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
             heading=tuple(str(value) for value in item.get("heading_path", [])),
             content=text,
             source_position=position,
-            metadata={**metadata, "mineru_type": item["type"], "warning": item["warning"],
-                      "table_body": item.get("table_body") if item["type"] == "table" else None},
+            metadata={**metadata, "mineru_type": item["type"]},
             disclosure_class=metadata["disclosure_class"],
             effective_from=None,
             effective_to=None,
             element_type=item["type"],
+            table_body=item.get("table_body"),
+            table_caption=item.get("table_caption"),
+            image_refs=tuple(str(value) for value in item.get("image_refs", [])),
+            bbox=item.get("bbox"),
+            warning=item.get("warning"),
+            text_level=item.get("text_level"),
+            page_no=item.get("page_no"),
         ))
     chunks = chunk_elements_v2(elements, max_chars=max_chars)
     parsed_dir = output_root / "parsed" / document_id / version_id
@@ -169,6 +175,8 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
                 "split_reason": chunk.split_reason,
                 "chunk_hash": chunk.chunk_hash,
                 "chunk_rule_version": chunk.rule_version,
+                "content_type": chunk.content_type,
+                "metadata": chunk.metadata,
             }, ensure_ascii=False, sort_keys=True) + "\n")
     _write_atomic(chunk_path, "".join(chunk_lines))
     meta = {

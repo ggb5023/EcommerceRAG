@@ -5,7 +5,6 @@ import unittest
 from unittest.mock import patch
 
 import grpc
-
 from app.ingest.service import IngestService
 from rag.v1 import rag_pb2
 
@@ -44,6 +43,10 @@ class IngestServiceTests(unittest.TestCase):
         self.assertFalse(result.documents[0].external_allowed)
         self.assertIn('"tenant_id": "server-tenant"', result.documents[0].chunks[0].metadata_json)
         self.assertIn('"shop_id": "server-shop"', result.documents[0].chunks[0].metadata_json)
+        self.assertEqual(result.documents[0].chunks[0].content_type, "heading")
+        self.assertEqual(result.documents[0].chunks[0].char_start, 0)
+        self.assertGreater(result.documents[0].chunks[0].char_end,
+                           result.documents[0].chunks[0].char_start)
 
     def test_validate_package_returns_build_metadata_without_parsing(self):
         request = self.make_request()

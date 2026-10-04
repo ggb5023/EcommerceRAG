@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 import grpc
 import yaml
 
-from app.ingest.pipeline import chunk_elements, parser_for
+from app.ingest.pipeline import chunk_elements_v2, parser_for
 from rag.v1 import rag_pb2, rag_pb2_grpc
 
 MAX_MANIFEST_BYTES = 256 * 1024
@@ -206,7 +206,7 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
                         target, document_id=spec["document_id"],
                         version_id=spec["version_id"], metadata=metadata,
                     )
-                    chunks = chunk_elements(elements)
+                    chunks = chunk_elements_v2(elements)
                 except (OSError, UnicodeError, ValueError, KeyError, RuntimeError):
                     _fail(context, "document could not be parsed")
                 if not chunks:
@@ -226,17 +226,18 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
                     chunk_total += 1
                     if chunk_total > MAX_CHUNKS:
                         _fail(context, "parsed package exceeds the chunk limit")
+                    position = chunk.source_position
                     parsed.chunks.add(
                         chunk_index=chunk_index,
                         section_seq=chunk.section_seq,
                         section_chunk_index=chunk.chunk_index,
-                        char_start=0,
-                        char_end=len(chunk.content),
+                        char_start=int(position.get("char_start", 0)),
+                        char_end=int(position.get("char_end", len(chunk.content))),
                         title=chunk.title,
                         heading_path=" / ".join(chunk.heading),
                         content=chunk.content,
                         token_count=max(1, len(chunk.content.split())),
-                        content_type="text",
+                        content_type=chunk.content_type,
                         split_reason=chunk.split_reason,
                         chunk_hash=chunk.chunk_hash,
                         metadata_json=json.dumps(chunk.metadata, ensure_ascii=False, sort_keys=True),

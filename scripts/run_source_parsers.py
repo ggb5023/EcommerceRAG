@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "python"))
-from app.ingest.pipeline import chunk_elements_v2, parser_for  # noqa: E402
+from app.ingest.pipeline import chunk_elements_v2, parser_for
 
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
 
@@ -58,19 +58,18 @@ def run(root: Path) -> dict:
                 "section_seq": c.section_seq,
                 "section_chunk_index": c.chunk_index,
                 "chunk_index": i,
+                "content_type": c.content_type,
                 "split_reason": c.split_reason,
                 "chunk_hash": c.chunk_hash,
                 "rule_version": c.rule_version,
-                "source_position": next(
-                    (e.source_position for e in elements if e.content and c.content in e.content), {}
-                ),
+                "source_position": c.source_position,
                 "token_count": max(1, len(c.content.split())),
             } for i, c in enumerate(chunks)]
         except UnicodeDecodeError:
             result["error_code"] = "encoding_error"
         except (ValueError, KeyError, OSError) as exc:
             result["error_code"] = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - preserve parser failure code in report
             result["error_code"] = type(exc).__name__
         expected_ok = item["expected_parse_status"] == "parseable"
         actual_ok = result["parse_status"] == "PASS"
@@ -98,7 +97,6 @@ def main() -> int:
     output = args.output or args.root / "reports" / "parse-report.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    passed = sum(r["parse_status"] == "PASS" for r in report["reports"])
     print(json.dumps({"output": str(output), **report["summary"]}))
     return 0 if report["summary"]["mismatches"] == 0 else 1
 

@@ -7,6 +7,7 @@ from app.ingest.pipeline import (
     DOCXParser,
     LocalIndex,
     MarkdownParser,
+    ParsedElement,
     chunk_elements,
     chunk_elements_v2,
 )
@@ -103,3 +104,48 @@ def test_structured_chunks_preserve_sentence_boundaries_and_rule_version(tmp_pat
     assert [chunk.chunk_hash for chunk in chunks] == [
         chunk.chunk_hash for chunk in chunk_elements_v2(elements, max_chars=80)
     ]
+
+
+def test_structured_chunks_use_exact_offsets_for_chinese_and_preserve_type(tmp_path: Path):
+    path = tmp_path / "types.md"
+    path.write_text(
+        "# 标题\n\n- 第一项\n- 第二项\n\n| 字段 | 值 |\n| --- | --- |\n| 型号 | PICO |\n\n![图](images/pico.png)\n\n```python\nprint('ok')\n```\n\n甲句。乙句！丙句？",
+        encoding="utf-8",
+    )
+    elements = MarkdownParser().parse(path, document_id="doc", version_id="v1", metadata=metadata())
+    assert {element.element_type for element in elements} >= {"heading", "list", "table", "image", "code", "text"}
+    chunks = chunk_elements_v2(elements, max_chars=6)
+    for chunk in chunks:
+        start = chunk.source_position["char_start"]
+        end = chunk.source_position["char_end"]
+        source = next(element.content for element in elements
+                      if element.element_type == chunk.content_type
+                      and chunk.heading == element.heading
+                      and chunk.metadata.get("tenant_id") == element.metadata.get("tenant_id"))
+        assert source[start:end] == chunk.content
+    assert any(chunk.content_type == "table" and chunk.metadata["table_body"] for chunk in chunks)
+    assert any(chunk.content_type == "image" and chunk.metadata["image_refs"] for chunk in chunks)
+
+
+def test_structured_chunks_overlap_is_bounded_and_deterministic():
+    element = ParsedElement(
+        document_id="doc", document_version_id="v1", title="title", heading=(),
+        content="第一句。第二句。第三句。", source_position={"line_start": 1},
+        metadata=metadata(), disclosure_class="external_allowed",
+        effective_from="2026-01-01", effective_to=None,
+    )
+    first = chunk_elements_v2([element], max_chars=6, overlap_chars=2)
+    second = chunk_elements_v2([element], max_chars=6, overlap_chars=2)
+    assert first and [item.chunk_hash for item in first] == [item.chunk_hash for item in second]
+    assert all(item.content == element.content[item.source_position["char_start"]:item.source_position["char_end"]]
+               for item in first)
+    assert all(item.source_position["char_end"] <= len(element.content) for item in first)
+
+
+def test_empty_elements_do_not_create_chunks():
+    empty = ParsedElement(
+        document_id="doc", document_version_id="v1", title="title", heading=(), content="",
+        source_position={}, metadata=metadata(), disclosure_class="external_allowed",
+        effective_from=None, effective_to=None,
+    )
+    assert chunk_elements_v2([empty]) == []

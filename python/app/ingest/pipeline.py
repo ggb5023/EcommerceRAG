@@ -28,12 +28,19 @@ class ParsedElement:
     title: str
     heading: tuple[str, ...]
     content: str
-    source_position: dict[str, int | None]
+    source_position: dict[str, Any]
     metadata: dict[str, Any]
     disclosure_class: str
     effective_from: str | None
     effective_to: str | None
     element_type: str = "text"
+    table_body: Any = None
+    table_caption: str | None = None
+    image_refs: tuple[str, ...] = ()
+    bbox: Any = None
+    warning: str | None = None
+    text_level: int | None = None
+    page_no: int | None = None
 
 
 @dataclass(frozen=True)
@@ -55,8 +62,9 @@ class Chunk:
     split_reason: str
     chunk_hash: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    source_position: dict[str, int | None] = field(default_factory=dict)
-    rule_version: str = "deterministic-char-700-v1"
+    source_position: dict[str, Any] = field(default_factory=dict)
+    rule_version: str = "structured-v2"
+    content_type: str = "text"
 
 
 class Parser(Protocol):
@@ -64,11 +72,20 @@ class Parser(Protocol):
 
 
 def _common(document_id: str, version_id: str, metadata: dict[str, Any], title: str,
-            content: str, position: dict[str, int | None], *, heading: tuple[str, ...] = (),
-            element_type: str = "text") -> ParsedElement:
-    return ParsedElement(document_id, version_id, title, heading, content.strip(), position,
-                         dict(metadata), metadata["disclosure_class"], metadata.get("effective_from"),
-                         metadata.get("effective_to"), element_type)
+            content: str, position: dict[str, Any], *, heading: tuple[str, ...] = (),
+            element_type: str = "text", table_body: Any = None,
+            table_caption: str | None = None, image_refs: Iterable[str] = (),
+            bbox: Any = None, warning: str | None = None,
+            text_level: int | None = None, page_no: int | None = None) -> ParsedElement:
+    return ParsedElement(
+        document_id=document_id, document_version_id=version_id, title=title,
+        heading=heading, content=content.strip(), source_position=position,
+        metadata=dict(metadata), disclosure_class=metadata["disclosure_class"],
+        effective_from=metadata.get("effective_from"), effective_to=metadata.get("effective_to"),
+        element_type=element_type, table_body=table_body, table_caption=table_caption,
+        image_refs=tuple(image_refs), bbox=bbox, warning=warning,
+        text_level=text_level, page_no=page_no,
+    )
 
 
 class MarkdownParser:
@@ -80,23 +97,64 @@ class MarkdownParser:
         start_line = 1
         title = metadata.get("title", document_id)
 
-        def flush(end_line: int) -> None:
+        def flush(end_line: int, *, element_type: str = "text", **kwargs: Any) -> None:
             nonlocal buffer, start_line
             body = "\n".join(buffer).strip()
             if body:
-                elements.append(_common(document_id, version_id, metadata, title, body,
-                                        {"line_start": start_line, "line_end": end_line},
-                                        heading=tuple(item[1] for item in stack)))
+                elements.append(_common(
+                    document_id, version_id, metadata, title, body,
+                    {"line_start": start_line, "line_end": end_line},
+                    heading=tuple(item[1] for item in stack), element_type=element_type,
+                    **kwargs,
+                ))
             buffer = []
+
+        def is_table_row(value: str) -> bool:
+            stripped = value.strip()
+            return stripped.startswith("|") and stripped.endswith("|")
+
+        def is_table_separator(value: str) -> bool:
+            cells = value.strip().strip("|").split("|")
+            return bool(cells) and all(re.fullmatch(r"\s*:?-{3,}:?\s*", cell) for cell in cells)
+
+        def table_body(rows: list[str]) -> list[list[str]]:
+            return [[cell.strip() for cell in row.strip().strip("|").split("|")] for row in rows]
 
         lines = text.splitlines()
         in_fence = False
-        for number, line in enumerate(lines, 1):
-            if line.strip().startswith("```"):
-                in_fence = not in_fence
-                buffer.append(line)
+        fence_info = ""
+        fence_start = 1
+        fence_lines: list[str] = []
+        index = 0
+        while index < len(lines):
+            number, line = index + 1, lines[index]
+            fence_match = re.match(r"^\s*```\s*([^\s]*)?.*$", line)
+            if not in_fence and fence_match:
+                flush(number - 1)
+                in_fence = True
+                fence_info = fence_match.group(1) or ""
+                fence_start = number
+                fence_lines = []
+                index += 1
                 continue
-            heading_match = None if in_fence else re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+            if in_fence:
+                if line.strip().startswith("```"):
+                    body = "\n".join(fence_lines).strip()
+                    if body:
+                        elements.append(_common(
+                            document_id, version_id, metadata, title, body,
+                            {"line_start": fence_start, "line_end": number},
+                            heading=tuple(item[1] for item in stack), element_type="code",
+                            warning=f"code_language:{fence_info}" if fence_info else None,
+                        ))
+                    in_fence = False
+                    fence_lines = []
+                else:
+                    fence_lines.append(line)
+                index += 1
+                continue
+
+            heading_match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
             if heading_match:
                 flush(number - 1)
                 level, heading = len(heading_match.group(1)), heading_match.group(2)
@@ -104,12 +162,76 @@ class MarkdownParser:
                     stack.pop()
                 stack.append((level, heading))
                 title = heading
-                start_line = number
+                elements.append(_common(
+                    document_id, version_id, metadata, title, heading,
+                    {"line_start": number, "line_end": number},
+                    heading=tuple(item[1] for item in stack), element_type="heading",
+                    text_level=level,
+                ))
+                start_line = number + 1
+                index += 1
                 continue
+
+            if is_table_row(line) and index + 1 < len(lines) and is_table_separator(lines[index + 1]):
+                flush(number - 1)
+                table_start = number
+                rows = [line, lines[index + 1]]
+                index += 2
+                while index < len(lines) and is_table_row(lines[index]):
+                    rows.append(lines[index])
+                    index += 1
+                parsed_rows = table_body(rows)
+                elements.append(_common(
+                    document_id, version_id, metadata, title,
+                    "\n".join(" | ".join(row) for row in parsed_rows),
+                    {"line_start": table_start, "line_end": index},
+                    heading=tuple(item[1] for item in stack), element_type="table",
+                    table_body=parsed_rows,
+                ))
+                buffer = []
+                start_line = index + 1
+                continue
+
+            image_match = re.match(r"^\s*!\[([^]]*)\]\(([^)]+)\)\s*$", line)
+            if image_match:
+                flush(number - 1)
+                alt_text, image_ref = image_match.groups()
+                elements.append(_common(
+                    document_id, version_id, metadata, title, alt_text or image_ref,
+                    {"line_start": number, "line_end": number},
+                    heading=tuple(item[1] for item in stack), element_type="image",
+                    image_refs=(image_ref,), warning="image_reference_only",
+                ))
+                start_line = number + 1
+                index += 1
+                continue
+
+            if re.match(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", line):
+                if not buffer:
+                    start_line = number
+                buffer.append(line)
+                next_line = lines[index + 1] if index + 1 < len(lines) else ""
+                if not re.match(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", next_line):
+                    flush(number, element_type="list")
+                index += 1
+                continue
+
             if not buffer:
                 start_line = number
             buffer.append(line)
-        flush(len(lines))
+            index += 1
+
+        if in_fence:
+            body = "\n".join(fence_lines).strip()
+            if body:
+                elements.append(_common(
+                    document_id, version_id, metadata, title, body,
+                    {"line_start": fence_start, "line_end": len(lines)},
+                    heading=tuple(item[1] for item in stack), element_type="code",
+                    warning="unterminated_code_fence",
+                ))
+        else:
+            flush(len(lines))
         return elements
 
 
@@ -135,9 +257,11 @@ class CSVParser:
                     row_metadata["shop_id"] = row_shop
                 if row.get("fact_type"):
                     row_metadata["fact_type"] = row["fact_type"]
-                elements.append(_common(document_id, version_id, row_metadata, metadata.get("title", document_id),
-                                        "\n".join(values), {"line_start": row_number, "line_end": row_number},
-                                        element_type="row"))
+                elements.append(_common(
+                    document_id, version_id, row_metadata, metadata.get("title", document_id),
+                    "\n".join(values), {"line_start": row_number, "line_end": row_number},
+                    element_type="table", table_body=[values],
+                ))
         return elements
 
 
@@ -160,6 +284,11 @@ class DOCXParser:
                 level = int(match.group(1))
                 del heading[level - 1:]
                 heading.append(content)
+                elements.append(_common(
+                    document_id, version_id, metadata, content, content,
+                    {"line_start": index, "line_end": index},
+                    heading=tuple(heading), element_type="heading", text_level=level,
+                ))
             else:
                 elements.append(_common(document_id, version_id, metadata, metadata.get("title", document_id), content,
                                         {"line_start": index, "line_end": index}, heading=tuple(heading)))
@@ -168,7 +297,7 @@ class DOCXParser:
             if rows:
                 elements.append(_common(document_id, version_id, metadata, metadata.get("title", document_id),
                                         "\n".join(rows), {"line_start": None, "line_end": None, "table": table_index},
-                                        heading=tuple(heading), element_type="table"))
+                                        heading=tuple(heading), element_type="table", table_body=[row.split(" | ") for row in rows]))
         return elements
 
     @staticmethod
@@ -194,7 +323,7 @@ class DOCXParser:
             if rows:
                 elements.append(_common(document_id, version_id, metadata, metadata.get("title", document_id),
                                         "\n".join(rows), {"line_start": None, "line_end": None, "table": table_index},
-                                        element_type="table"))
+                                        element_type="table", table_body=[row.split(" | ") for row in rows]))
         return elements
 
 
@@ -203,53 +332,122 @@ def parser_for(format_name: str) -> Parser:
 
 
 def chunk_elements(elements: Iterable[ParsedElement], *, max_chars: int = 700) -> list[Chunk]:
-    chunks: list[Chunk] = []
-    section_seq = 0
-    for element in elements:
-        if not element.content:
-            continue
-        section_seq += 1
-        pieces = [element.content[i:i + max_chars] for i in range(0, len(element.content), max_chars)]
-        for index, piece in enumerate(pieces):
-            reason = "hard_split" if len(pieces) > 1 else ("row_boundary" if element.element_type == "row" else "element_boundary")
-            chunk_hash = digest(f"{element.document_id}\0{element.document_version_id}\0{element.source_position}\0{piece}")
-            chunks.append(Chunk(element.document_id, element.document_version_id, "chunk-" + chunk_hash[:20],
-                                element.title, element.heading, piece, f"local://{element.document_id}/{chunk_hash}",
-                                element.metadata["tenant_id"], element.metadata["shop_id"], element.disclosure_class,
-                                element.effective_from, element.effective_to, section_seq, index, reason, chunk_hash,
-                                element.metadata, element.source_position, "deterministic-char-700-v1"))
-    return chunks
+    """Compatibility entry point for callers of the pre-structured slicer.
+
+    The old name remains part of the local API, but all callers now receive the
+    versioned structure-aware contract.  Keeping one implementation avoids
+    producing two incompatible source-position and hash formats.
+    """
+    return chunk_elements_v2(elements, max_chars=max_chars)
 
 
 CHUNK_RULE_VERSION = "structured-v2"
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[。！？；.!?;])\s+|\n+")
+_SENTENCE_ENDINGS = frozenset("。！？；.!?;")
+_CONTENT_TYPES = frozenset({"text", "heading", "table", "image", "list", "code"})
 
 
-def _split_structured_text(content: str, max_chars: int) -> list[tuple[str, str]]:
-    """Split on sentence/paragraph boundaries, then hard split only as a last resort."""
-    if len(content) <= max_chars:
-        return [(content, "element_boundary")]
-    units = [unit.strip() for unit in _SENTENCE_BOUNDARY.split(content) if unit.strip()]
-    pieces: list[tuple[str, str]] = []
-    current = ""
-    for unit in units:
-        candidate = f"{current} {unit}".strip() if current else unit
-        if len(candidate) <= max_chars:
-            current = candidate
+def _element_boundary_reason(element_type: str) -> str:
+    """Give single-element chunks a stable reason that preserves structure."""
+    normalized = "table" if element_type == "row" else element_type
+    if normalized in _CONTENT_TYPES:
+        return f"{normalized}_boundary"
+    return "element_boundary"
+
+
+def _sentence_ranges(content: str) -> list[tuple[int, int]]:
+    """Return exact source ranges split at punctuation or paragraph breaks.
+
+    Ranges include every original character.  In particular, no separator is
+    inserted between Chinese sentences, so a chunk's offsets always index the
+    element's original content.
+    """
+    if not content:
+        return []
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    index = 0
+    length = len(content)
+    while index < length:
+        character = content[index]
+        boundary: int | None = None
+        if character == "\n":
+            boundary = index + 1
+            while boundary < length and content[boundary] == "\n":
+                boundary += 1
+        elif character in _SENTENCE_ENDINGS:
+            # A period in a decimal is not a useful sentence boundary.  Other
+            # punctuation is split even without whitespace for Chinese text.
+            if not (character == "." and index > 0 and index + 1 < length
+                    and content[index - 1].isdigit() and content[index + 1].isdigit()):
+                boundary = index + 1
+        if boundary is not None and boundary > start:
+            ranges.append((start, boundary))
+            start = boundary
+            index = boundary
+        else:
+            index += 1
+    if start < length:
+        ranges.append((start, length))
+    return ranges
+
+
+def _split_structured_text(content: str, max_chars: int) -> list[tuple[str, str, int, int]]:
+    """Split into exact source ranges, using hard splits only as a last resort."""
+    ranges = _sentence_ranges(content)
+    if not ranges:
+        return []
+    pieces: list[tuple[str, str, int, int]] = []
+    current_start: int | None = None
+    current_end = 0
+    for unit_start, unit_end in ranges:
+        unit_length = unit_end - unit_start
+        if unit_length > max_chars:
+            if current_start is not None:
+                pieces.append((content[current_start:current_end], "sentence_boundary",
+                               current_start, current_end))
+                current_start = None
+            for start in range(unit_start, unit_end, max_chars):
+                end = min(start + max_chars, unit_end)
+                pieces.append((content[start:end], "hard_split", start, end))
             continue
-        if current:
-            pieces.append((current, "sentence_boundary"))
-            current = ""
-        while len(unit) > max_chars:
-            pieces.append((unit[:max_chars], "hard_split"))
-            unit = unit[max_chars:]
-        current = unit
-    if current:
-        pieces.append((current, "sentence_boundary" if len(pieces) else "element_boundary"))
+        if current_start is None:
+            current_start, current_end = unit_start, unit_end
+        elif unit_end - current_start <= max_chars:
+            current_end = unit_end
+        else:
+            # A punctuation-only Chinese run has no whitespace boundary to
+            # use once the budget is reached.  Keep the exact sentence range,
+            # but label the budget-forced cut as hard_split for observability.
+            reason = ("hard_split" if not re.search(r"\s", content)
+                      else "sentence_boundary")
+            pieces.append((content[current_start:current_end], reason,
+                           current_start, current_end))
+            current_start, current_end = unit_start, unit_end
+    if current_start is not None:
+        reason = "element_boundary" if len(pieces) == 0 else "sentence_boundary"
+        pieces.append((content[current_start:current_end], reason, current_start, current_end))
     return pieces
 
 
+def _chunk_metadata(element: ParsedElement) -> dict[str, Any]:
+    metadata = dict(element.metadata)
+    structured = {
+        "table_body": element.table_body,
+        "table_caption": element.table_caption,
+        "image_refs": list(element.image_refs),
+        "bbox": element.bbox,
+        "warning": element.warning,
+        "text_level": element.text_level,
+        "page_no": element.page_no,
+    }
+    for key, value in structured.items():
+        if value not in (None, [], ()):
+            metadata.setdefault(key, value)
+    return metadata
+
+
 def chunk_elements_v2(elements: Iterable[ParsedElement], *, max_chars: int = 700,
+                      overlap_chars: int = 0,
                       rule_version: str = CHUNK_RULE_VERSION) -> list[Chunk]:
     """Structure-aware deterministic chunks for parser/MinerU experiments.
 
@@ -259,26 +457,34 @@ def chunk_elements_v2(elements: Iterable[ParsedElement], *, max_chars: int = 700
     """
     if max_chars <= 0:
         raise ValueError("max_chars must be positive")
+    if overlap_chars < 0 or overlap_chars >= max_chars:
+        raise ValueError("overlap_chars must be between 0 and max_chars - 1")
     chunks: list[Chunk] = []
     section_seq = 0
-    global_index = 0
     for element in elements:
         if not element.content:
             continue
         section_seq += 1
         pieces = _split_structured_text(element.content, max_chars)
-        offset = 0
-        for section_index, (piece, reason) in enumerate(pieces):
-            start = offset
-            offset += len(piece)
+        for section_index, (_, base_reason, base_start, base_end) in enumerate(pieces):
+            # Include overlap from the previous base range while preserving
+            # exact offsets.  Overlap is scoped to one parsed element.
+            start = max(0, base_start - overlap_chars) if section_index else base_start
+            offset = base_end
+            piece = element.content[start:offset]
+            reason = (_element_boundary_reason(element.element_type)
+                      if base_reason == "element_boundary" else base_reason)
             source_position = dict(element.source_position)
             source_position["char_start"] = start
             source_position["char_end"] = offset
+            content_type = element.element_type if element.element_type in _CONTENT_TYPES else "text"
+            metadata = _chunk_metadata(element)
             canonical = json.dumps({
                 "document_id": element.document_id,
                 "version_id": element.document_version_id,
                 "source_position": source_position,
                 "content": piece,
+                "content_type": content_type,
                 "rule_version": rule_version,
             }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             chunk_hash = digest(canonical)
@@ -288,10 +494,9 @@ def chunk_elements_v2(elements: Iterable[ParsedElement], *, max_chars: int = 700
                 f"local://{element.document_id}/{chunk_hash}",
                 element.metadata["tenant_id"], element.metadata["shop_id"],
                 element.disclosure_class, element.effective_from, element.effective_to,
-                section_seq, section_index, reason, chunk_hash, element.metadata,
-                source_position, rule_version,
+                section_seq, section_index, reason, chunk_hash, metadata,
+                source_position, rule_version, content_type,
             ))
-            global_index += 1
     return chunks
 
 
@@ -364,7 +569,11 @@ class LocalIndex:
             overlap = len(q & self._tokens(searchable))
             if overlap:
                 results.append((overlap / max(len(q), 1), chunk))
-        results.sort(key=lambda item: (-item[0], item[1].chunk_id))
+        # Headings remain useful evidence, but a record/paragraph carrying the
+        # answer should win an otherwise equal lexical score.  This keeps the
+        # structured parser's standalone heading elements from outranking the
+        # product or policy content they introduce.
+        results.sort(key=lambda item: (-item[0], item[1].content_type == "heading", item[1].chunk_id))
         expanded: list[tuple[float, Chunk]] = []
         seen: set[str] = set()
         for score, hit in results[:limit]:
@@ -400,5 +609,5 @@ def load_manifest_index(manifest_path: Path, *, version_id: str | None = None) -
         current_version = version_id or "v-" + digest(info["sha256"] + result.manifest["pipeline_version"])[:16]
         elements = parser_for(info["format"]).parse(result.root / info["path"], document_id=document_id,
                                                       version_id=current_version, metadata=metadata)
-        chunks.extend(chunk_elements(elements))
+        chunks.extend(chunk_elements_v2(elements))
     return LocalIndex(chunks)

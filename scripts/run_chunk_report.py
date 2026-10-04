@@ -22,10 +22,14 @@ def main() -> int:
             continue
         for item in report["chunks"]:
             chunks.append({"fixture_id": report["fixture_id"], **item})
+    rule_versions = sorted({item.get("rule_version") for item in chunks if item.get("rule_version")})
+    mixed_versions = len(rule_versions) > 1
     canonical = json.dumps(chunks, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     output = {
-        "report_version": "source-fixtures-chunk-v1",
-        "chunk_rule_version": "deterministic-char-700-v1",
+        "report_version": "source-fixtures-chunk-v2",
+        "chunk_rule_version": rule_versions[0] if len(rule_versions) == 1 else None,
+        "chunk_rule_versions": rule_versions,
+        "mixed_rule_versions": mixed_versions,
         "real_service_acceptance": False,
         "fixture_count": data["summary"]["fixtures"],
         "successful_fixture_count": data["summary"]["passed"],
@@ -36,7 +40,7 @@ def main() -> int:
     path = args.root / "reports" / "chunk-report.json"
     path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(path), "chunks": len(chunks), "sha256": output["chunk_report_sha256"]}))
-    return 0
+    return 1 if mixed_versions else 0
 
 
 if __name__ == "__main__":
