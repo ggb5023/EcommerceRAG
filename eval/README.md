@@ -113,6 +113,13 @@ material is reported separately. `run_aligned_retrieval.py` counts a policy
 refusal only when the case explicitly expects an unauthorized or unanswerable
 result; ordinary Recall/MRR/nDCG never includes a refused case, and an
 unexpected policy block keeps the run `NOT_RUN`.
+
+`review_alignment.py` creates a separate 60-row source-mapping checklist with
+`pending`, `approved`, `needs_revision`, or `rejected` states. It verifies the
+proposal hash and every copied evidence field, detects tampering, and reports
+`REVIEWED` only when all rows are approved. `REVIEWED` is still not an
+`alignment.json` approval; the retrieval runner continues to require a
+separately controlled `status=APPROVED` mapping.
 Authorization fields are checked for tenant, shop, and role completeness;
 unauthorized cases must retain a target evidence/document reference. The
 synthetic set models an unauthorized request with a normal operator context,
