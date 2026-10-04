@@ -157,6 +157,7 @@ def build_proposal(cases_path: Path, manifest_path: Path) -> dict[str, Any]:
         case_checks.append(
             {
                 "case_id": case_id,
+                "expected_doc_ids": expected_ids,
                 "expected_doc_count": len(expected_ids),
                 "mapped_doc_count": len(case_mapping),
                 "document_checks": document_checks,

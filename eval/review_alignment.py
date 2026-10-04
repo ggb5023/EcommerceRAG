@@ -36,7 +36,10 @@ def _evidence(check: dict[str, Any]) -> dict[str, Any]:
     document_checks = check.get("document_checks", [])
     return {
         "case_id": check.get("case_id"),
-        "expected_doc_ids": [item.get("expected_doc_id") for item in document_checks],
+        "expected_doc_ids": check.get(
+            "expected_doc_ids",
+            [item.get("expected_doc_id") for item in document_checks],
+        ),
         "source_document_ids": [item.get("source_document_id") for item in document_checks],
         "document_checks": document_checks,
     }

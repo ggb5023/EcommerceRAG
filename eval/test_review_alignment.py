@@ -13,6 +13,7 @@ def _proposal(tmp_path: Path) -> tuple[Path, dict]:
         "eval_set_version": "synthetic-m2-v1",
         "case_checks": [{
             "case_id": "case-1",
+            "expected_doc_ids": ["label-doc"],
             "document_checks": [{
                 "expected_doc_id": "label-doc",
                 "source_document_id": "source-doc-v1",
