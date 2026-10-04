@@ -91,6 +91,16 @@ Only an explicitly reviewed mapping with `status=APPROVED` allows Recall@5,
 MRR, and nDCG@5. Missing, drifted, unauthorized, or date-incompatible
 mappings remain `NOT_RUN`; an ID alias or derived document is never accepted
 as a hit.
+
+`validate_alignment.py` is the read-only precheck for that mapping. It accepts
+explicit paths from any working directory, verifies the immutable 60-case
+input hash, corpus document and chunk identity, mapping keys and source IDs,
+tenant/shop scope, and effective-date fields. It reports
+`PASS`, `PENDING_REVIEW`, or `FAIL` and never changes `alignment.json`, approves
+a mapping, copies case text into the corpus, or calculates retrieval metrics.
+The current demo corpus has an empty pending mapping, so its report remains
+`PENDING_REVIEW` with `alignment_pending_review` and
+`alignment_mapping_empty`.
 Authorization fields are checked for tenant, shop, and role completeness;
 unauthorized cases must retain a target evidence/document reference. The
 synthetic set models an unauthorized request with a normal operator context,
