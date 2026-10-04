@@ -11,6 +11,8 @@ import re
 from datetime import date
 from pathlib import Path
 
+from alignment_policy import assess_document
+
 
 def tokens(value: str) -> set[str]:
     value = value.lower()
@@ -73,6 +75,21 @@ def _metrics(rows: list[dict]) -> dict[str, float | None]:
     }
 
 
+def _policy_refusal_expected(case: dict) -> bool:
+    tags = set(case.get("tags", []))
+    return bool(tags & {"unauthorized", "unanswerable"})
+
+
+def _acceptable_policy_refusal(case: dict, status: str) -> bool:
+    """Only a refusal explicitly expected by the case can complete a run."""
+    return status in {
+        "ACCESS_DENIED",
+        "UNCLASSIFIED_BLOCKED",
+        "EXPIRED_OR_REVOKED",
+        "NOT_YET_EFFECTIVE",
+    } and _policy_refusal_expected(case)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parent
@@ -122,6 +139,7 @@ def main() -> int:
     approved = alignment.get("status") == "APPROVED" and alignment.get("real_service_acceptance") is False
     rows: list[dict] = []
     issues: list[str] = []
+    refusal_counts: collections.Counter = collections.Counter()
     if alignment_error:
         issues.append(alignment_error)
     if duplicate_corpus_ids:
@@ -179,6 +197,43 @@ def main() -> int:
             rows.append({"case_id": case_id, "status": "ALIGNMENT_INVALID",
                          "reason": "document_scope_mismatch", "document_ids": scope_mismatch})
             continue
+        policy_rows = [
+            {
+                "document_id": doc_id,
+                "policy": assess_document(corpus_by_id[doc_id], case.get("business_date"), allowed),
+            }
+            for doc_id in source_ids
+        ]
+        blocked = [
+            item for item in policy_rows
+            if item["policy"]["status"] != "ELIGIBLE"
+        ]
+        if blocked:
+            blocked_statuses = [item["policy"]["status"] for item in blocked]
+            primary_status = blocked_statuses[0] if len(set(blocked_statuses)) == 1 else "POLICY_BLOCKED"
+            expected_refusal = _policy_refusal_expected(case)
+            refusal_match = _acceptable_policy_refusal(case, primary_status)
+            refusal_counts[primary_status] += 1
+            refusal_counts["expected_refusal" if expected_refusal else "unexpected_refusal"] += 1
+            refusal_counts["matched" if refusal_match else "unmatched"] += 1
+            if not refusal_match:
+                issues.append(f"{case_id}:unexpected_policy_refusal:{primary_status}")
+            rows.append(
+                {
+                    "case_id": case_id,
+                    "status": primary_status,
+                    "policy_status": primary_status,
+                    "blocked_document_ids": [item["document_id"] for item in blocked],
+                    "policy_risk_reasons": sorted({
+                        reason
+                        for item in blocked
+                        for reason in item["policy"].get("risk_reasons", [])
+                    }),
+                    "expected_refusal": expected_refusal,
+                    "refusal_match": refusal_match,
+                }
+            )
+            continue
         ranked: list[tuple[int, str, dict]] = []
         for doc_id in source_ids:
             document = corpus_by_id[doc_id]
@@ -202,6 +257,7 @@ def main() -> int:
             {
                 "case_id": case_id,
                 "status": "MEASURED",
+                "policy_status": "ELIGIBLE",
                 "hit": bool(hit_positions),
                 "reciprocal_rank": 1 / hit_positions[0] if hit_positions else 0.0,
                 "ndcg_at_5": _dcg(relevances) / max(_dcg(ideal), 1.0),
@@ -218,11 +274,18 @@ def main() -> int:
         "pipeline_version": "local-source-alignment-v1",
         "model_version": "deterministic-keyword-v1",
         "real_service_acceptance": False,
-        "status": "PASS" if approved and not issues and len(measured) == len(cases) else "NOT_RUN",
+        "status": "PASS" if approved and not issues and all(
+            row["status"] == "MEASURED" or row.get("refusal_match") is True
+            for row in rows
+        ) else "NOT_RUN",
         "metrics": _metrics(rows),
         "case_count": len(cases),
         "measured_case_count": len(measured),
         "status_counts": dict(collections.Counter(row["status"] for row in rows)),
+        "policy_status_counts": dict(collections.Counter(
+            row["policy_status"] for row in rows if row.get("policy_status")
+        )),
+        "refusal_counts": dict(refusal_counts),
         "issues": issues,
         "notes": [
             "Corpus content is parsed from the local synthetic source manifest.",

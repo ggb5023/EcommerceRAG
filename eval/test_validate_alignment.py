@@ -16,6 +16,7 @@ def _write_inputs(tmp_path: Path, alignment: dict, *, cases_sha: str | None = No
             "case_id": f"case-{index}",
             "expected_doc_ids": [f"label-doc-{index}"],
             "authorization": {"tenant_id": "tenant-a", "shop_id": "shop-a", "role": "operator"},
+            "business_date": "2026-10-04",
         }
         for index in range(1, 61)
     ]
@@ -34,7 +35,17 @@ def _write_inputs(tmp_path: Path, alignment: dict, *, cases_sha: str | None = No
                     "document_id": f"actual-doc-{index}",
                     "tenant_id": "tenant-a",
                     "shop_id": "shop-a",
-                    "chunks": [],
+                    "chunks": [
+                        {
+                            "chunk_id": f"chunk-{index}",
+                            "content": "synthetic source",
+                            "tenant_id": "tenant-a",
+                            "shop_id": "shop-a",
+                            "disclosure_class": "external_allowed",
+                            "effective_from": "2026-01-01",
+                            "effective_to": None,
+                        }
+                    ],
                 }
             )
             for index in range(1, 61)
@@ -110,6 +121,8 @@ def test_scope_mismatch_is_not_approved(tmp_path: Path) -> None:
     documents = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines()]
     documents[0]["tenant_id"] = "tenant-b"
     documents[0]["shop_id"] = "shop-b"
+    documents[0]["chunks"][0]["tenant_id"] = "tenant-b"
+    documents[0]["chunks"][0]["shop_id"] = "shop-b"
     corpus.write_text("\n".join(json.dumps(document) for document in documents) + "\n", encoding="utf-8")
     output = tmp_path / "report.json"
     subprocess.run(

@@ -10,6 +10,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from alignment_policy import assess_document, ALLOWED_DISCLOSURE_CLASSES
+
 ALLOWED_ALIGNMENT_STATUSES = {"PENDING_REVIEW", "APPROVED", "REJECTED"}
 REQUIRED_CASE_COUNT = 60
 
@@ -97,6 +99,8 @@ def _validate_corpus(corpus: list[dict[str, Any]]) -> tuple[dict[str, dict[str, 
                 and date.fromisoformat(chunk["effective_from"]) >= date.fromisoformat(chunk["effective_to"])
             ):
                 errors.append(f"corpus_chunk_date_range_invalid:{document_id}:{chunk_number}")
+            if chunk.get("disclosure_class") not in ALLOWED_DISCLOSURE_CLASSES:
+                errors.append(f"corpus_chunk_disclosure_class_invalid:{document_id}:{chunk_number}")
         documents[document_id] = document
     return documents, errors
 
@@ -105,12 +109,13 @@ def _validate_mapping(
     cases: list[dict[str, Any]],
     corpus: dict[str, dict[str, Any]],
     alignment: dict[str, Any],
-) -> tuple[list[str], collections.Counter, int]:
+) -> tuple[list[str], collections.Counter, int, collections.Counter]:
     errors: list[str] = []
     statuses: collections.Counter = collections.Counter()
+    policy_statuses: collections.Counter = collections.Counter()
     mapping = alignment.get("case_to_source_documents", {})
     if not isinstance(mapping, dict):
-        return ["alignment_case_to_source_documents_not_object"], statuses, 0
+        return ["alignment_case_to_source_documents_not_object"], statuses, 0, policy_statuses
     case_by_id = {case.get("case_id"): case for case in cases}
     unknown_cases = sorted(set(mapping) - set(case_by_id))
     errors.extend(f"unknown_alignment_case_id:{case_id}" for case_id in unknown_cases)
@@ -151,9 +156,14 @@ def _validate_mapping(
             errors.append(f"{case_id}:source_document_scope_mismatch:{','.join(scope_mismatch)}")
             statuses["invalid"] += 1
             continue
+        for source_id in source_ids:
+            policy = assess_document(corpus[source_id], case.get("business_date"), authorization)
+            policy_statuses[policy["status"]] += 1
+            if policy["status"] in {"INVALID_POLICY", "INVALID_BUSINESS_DATE", "SCOPE_MISMATCH"}:
+                errors.append(f"{case_id}:source_policy_invalid:{source_id}:{policy['status']}")
         statuses["complete"] += 1
         complete += 1
-    return errors, statuses, complete
+    return errors, statuses, complete, policy_statuses
 
 
 def validate(cases_path: Path, metadata_path: Path, corpus_path: Path, alignment_path: Path) -> dict[str, Any]:
@@ -187,7 +197,7 @@ def validate(cases_path: Path, metadata_path: Path, corpus_path: Path, alignment
     if alignment_status == "PENDING_REVIEW":
         issues.append("alignment_pending_review")
 
-    mapping_errors, mapping_counts, complete_count = _validate_mapping(cases, corpus, alignment)
+    mapping_errors, mapping_counts, complete_count, policy_statuses = _validate_mapping(cases, corpus, alignment)
     issues.extend(mapping_errors)
     structural_prefixes = (
         "jsonl_input_invalid:",
@@ -221,6 +231,7 @@ def validate(cases_path: Path, metadata_path: Path, corpus_path: Path, alignment
         "mapped_case_count": mapping_counts.get("complete", 0),
         "missing_mapping_case_count": mapping_counts.get("missing", 0),
         "invalid_mapping_case_count": mapping_counts.get("invalid", 0),
+        "policy_status_counts": dict(sorted(policy_statuses.items())),
         "issues": sorted(set(issues)),
         "real_service_acceptance": False,
         "notes": [
