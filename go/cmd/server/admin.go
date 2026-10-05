@@ -821,6 +821,29 @@ func (e *adminConflictError) Error() string { return e.message }
 
 func (g *gateway) persistParsedPackage(ctx context.Context, parsed *ragv1.ParsePackageResponse, manifest string,
 	files []*ragv1.PackageFile, tenantID, userID int64, shopID string) error {
+	claim := &ingestClaim{
+		TenantID: tenantID, ShopID: shopID, ManifestSHA: "",
+	}
+	if parsed != nil {
+		claim.ManifestSHA = parsed.ManifestSha256
+	}
+	for index, file := range files {
+		if file == nil {
+			return &ingestParseQualityError{code: "parse_file_invalid", message: "parser file binding is invalid"}
+		}
+		claimFile := ingestClaimFile{ItemID: int64(index + 1), Path: file.Path, Content: file.Content}
+		for _, document := range parsed.GetDocuments() {
+			if document != nil && document.Path == file.Path {
+				claimFile.DocumentID = document.DocumentId
+				claimFile.SourceHash = document.SourceHash
+				break
+			}
+		}
+		claim.Files = append(claim.Files, claimFile)
+	}
+	if err := validateParsedPackage(claim, parsed); err != nil {
+		return err
+	}
 	tx, err := g.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err

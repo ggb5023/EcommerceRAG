@@ -87,6 +87,11 @@ class IngestServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unreferenced"):
             IngestService().ParsePackage(request, AbortContext())
 
+    def test_rejects_documents_that_produce_no_chunks(self):
+        request = self.make_request(content=b"\n\n")
+        with self.assertRaisesRegex(RuntimeError, "no content chunks"):
+            IngestService().ParsePackage(request, AbortContext())
+
 
 if __name__ == "__main__":
     unittest.main()

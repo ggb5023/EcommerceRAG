@@ -36,12 +36,14 @@ REQUIRED_STATES = {
 REQUIRED_GOAL_STAGES = (
     "启动与基线复核",
     "工程闭环稳定",
-    "M2 对齐评测收口",
-    "摄取和解析闭环",
-    "检索和模型接入",
-    "来源与 crawler",
-    "M3 生产化前置",
-    "发布和文档闭环",
+    "M3 synthetic 管理与 worker 相邻回归",
+    "合成 M2 RAG 纵向链路",
+    "真实文档摄取与 MinerU 解析闭环",
+    "检索、Qwen Provider 与 pgvector",
+    "公开来源与 crawler",
+    "电商平台数据与真实身份适配",
+    "M3 生产管理与运行就绪",
+    "安全、容量、发布与持续治理",
 )
 
 
@@ -172,7 +174,16 @@ def check(repo_root: Path, private_root: Path) -> list[str]:
 
     goal_path = private_root / "CODEX_GOAL持续开发计划.md"
     goal = goal_path.read_text(encoding="utf-8") if goal_path.is_file() else ""
-    for required in ("当前工程状态矩阵.md", f"§{expected_section}", "syn-005", "启动与基线复核", "发布和文档闭环"):
+    for required in (
+        "当前工程状态矩阵.md",
+        f"§{expected_section}",
+        "M1_PASS",
+        "M2_SYNTHETIC_PASS",
+        "M2_REAL_NOT_READY",
+        "M3_SYNTHETIC_ADMIN_ONLY",
+        "CONFIG_BLOCKED",
+        "NOT_RUN",
+    ):
         if required not in goal:
             error("CODEX_GOAL持续开发计划.md", f"required current protocol reference missing: {required}")
     if head and f"代码基线 HEAD：`{head}`" not in goal:
@@ -262,9 +273,6 @@ def check(repo_root: Path, private_root: Path) -> list[str]:
             error("CODEX_GOAL持续开发计划.md", f"required end-to-end stage is missing: {stage}")
     if "§78" in goal or "§74" in goal:
         error("CODEX_GOAL持续开发计划.md", "goal refers to a stale current acceptance section")
-    if "syn-005" not in goal or "PENDING_REVIEW" not in goal or "NOT_RUN" not in goal:
-        error("CODEX_GOAL持续开发计划.md", "goal must keep the unresolved syn-005 gate explicit")
-
     return errors
 
 

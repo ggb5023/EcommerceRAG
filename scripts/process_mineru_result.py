@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -95,6 +96,52 @@ def _write_atomic(path: Path, data: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _write_staged_atomic(staging_root: Path, path: Path, data: str) -> None:
+    """Remove an unpublished staging tree if any artifact write fails."""
+    try:
+        _write_atomic(path, data)
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
+
+def _commit_artifacts(staging: Path, output_root: Path, document_id: str,
+                      version_id: str) -> None:
+    """Publish parsed and chunk artifacts together after all writes succeed."""
+    final_parsed = output_root / "parsed" / document_id / version_id
+    final_chunk = output_root / "chunks" / f"{document_id}-{version_id}.jsonl"
+    backup = Path(tempfile.mkdtemp(prefix=".mineru-backup-", dir=output_root))
+    old_parsed = backup / "parsed"
+    old_chunk = backup / "chunk.jsonl"
+    published_parsed = False
+    published_chunk = False
+    try:
+        if final_parsed.exists():
+            old_parsed.parent.mkdir(parents=True, exist_ok=True)
+            final_parsed.rename(old_parsed)
+        if final_chunk.exists():
+            final_chunk.rename(old_chunk)
+        final_parsed.parent.mkdir(parents=True, exist_ok=True)
+        final_chunk.parent.mkdir(parents=True, exist_ok=True)
+        (staging / "parsed" / document_id / version_id).rename(final_parsed)
+        published_parsed = True
+        (staging / "chunks.jsonl").rename(final_chunk)
+        published_chunk = True
+    except Exception:
+        if published_chunk:
+            final_chunk.unlink(missing_ok=True)
+        if published_parsed:
+            shutil.rmtree(final_parsed, ignore_errors=True)
+        if old_chunk.exists():
+            old_chunk.rename(final_chunk)
+        if old_parsed.exists():
+            old_parsed.parent.mkdir(parents=True, exist_ok=True)
+            old_parsed.rename(final_parsed)
+        raise
+    finally:
+        shutil.rmtree(backup, ignore_errors=True)
+
+
 def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
             tenant_id: str, shop_id: str, max_chars: int = 700,
             task_id: str | None = None, input_pdf_sha256: str | None = None,
@@ -109,6 +156,8 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
         raise ValueError("max_chars must be positive")
     raw, raw_sha256 = _load_content_list(root)
     normalized = normalize_content_list(raw, document_id=document_id, version_id=version_id)
+    if not normalized:
+        raise ValueError("parsed_elements_empty")
     metadata = {
         "tenant_id": tenant_id,
         "shop_id": shop_id,
@@ -145,14 +194,16 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
             page_no=item.get("page_no"),
         ))
     chunks = chunk_elements_v2(elements, max_chars=max_chars)
-    parsed_dir = output_root / "parsed" / document_id / version_id
-    chunks_dir = output_root / "chunks"
-    parsed_dir.mkdir(parents=True, exist_ok=True)
-    chunks_dir.mkdir(parents=True, exist_ok=True)
+    if not chunks:
+        raise ValueError("parsed_chunks_empty")
+    output_root.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(tempfile.mkdtemp(prefix=".mineru-stage-", dir=output_root))
+    parsed_dir = staging_root / "parsed" / document_id / version_id
+    chunks_dir = staging_root
     layout = {"document_id": document_id, "document_version_id": version_id,
               "elements": normalized}
-    _write_atomic(parsed_dir / "layout.json",
-                  json.dumps(layout, ensure_ascii=False, indent=2) + "\n")
+    _write_staged_atomic(staging_root, parsed_dir / "layout.json",
+                         json.dumps(layout, ensure_ascii=False, indent=2) + "\n")
     lines = []
     for item in normalized:
         text = _element_text(item)
@@ -162,8 +213,8 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
                 lines.append("#" * max(1, min(level, 6)) + " " + text)
             else:
                 lines.append(text)
-    _write_atomic(parsed_dir / "full.md", "\n\n".join(lines) + "\n")
-    chunk_path = chunks_dir / f"{document_id}-{version_id}.jsonl"
+    _write_staged_atomic(staging_root, parsed_dir / "full.md", "\n\n".join(lines) + "\n")
+    chunk_path = chunks_dir / "chunks.jsonl"
     chunk_lines = []
     for chunk in chunks:
         chunk_lines.append(json.dumps({
@@ -178,7 +229,7 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
                 "content_type": chunk.content_type,
                 "metadata": chunk.metadata,
             }, ensure_ascii=False, sort_keys=True) + "\n")
-    _write_atomic(chunk_path, "".join(chunk_lines))
+    _write_staged_atomic(staging_root, chunk_path, "".join(chunk_lines))
     meta = {
         "report_version": "mineru-artifact-v1",
         "document_id": document_id,
@@ -191,8 +242,8 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
         "image_count": sum(item["type"] == "image" for item in normalized),
         "warning_count": sum(bool(item.get("warning")) for item in normalized),
         "chunk_rule_version": chunks[0].rule_version if chunks else "structured-v2",
-        "parsed_artifact_path": str(parsed_dir.relative_to(output_root)),
-        "chunk_path": str(chunk_path.relative_to(output_root)),
+            "parsed_artifact_path": str(Path("parsed") / document_id / version_id),
+            "chunk_path": str(Path("chunks") / f"{document_id}-{version_id}.jsonl"),
         "real_service_acceptance": False,
     }
     if task_id is not None:
@@ -201,7 +252,11 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
         meta["input_pdf_sha256"] = input_pdf_sha256
     if result_sha256 is not None:
         meta["result_sha256"] = result_sha256
-    _write_atomic(parsed_dir / "meta.json", json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
+    _write_staged_atomic(staging_root, parsed_dir / "meta.json", json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
+    try:
+        _commit_artifacts(staging_root, output_root, document_id, version_id)
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
     return meta
 
 

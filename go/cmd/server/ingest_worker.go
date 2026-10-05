@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	ragv1 "github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1"
 	"github.com/jackc/pgx/v5"
@@ -77,6 +78,227 @@ type adminJobConfirmation struct {
 }
 
 var errIngestLeaseLost = errors.New("ingest lease lost")
+
+type ingestParseQualityError struct {
+	code    string
+	message string
+}
+
+func (e *ingestParseQualityError) Error() string { return e.message }
+
+func validSHA256Hex(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+type parsedDatasetHashDocument struct {
+	Chunks     int    `json:"chunks"`
+	DocumentID string `json:"document_id"`
+	SourceHash string `json:"source_hash"`
+}
+
+type parsedDatasetHashPayload struct {
+	Documents      []parsedDatasetHashDocument `json:"documents"`
+	ManifestSHA256 string                      `json:"manifest_sha256"`
+}
+
+func parsedDatasetSHA256(manifestSHA string, documents []*ragv1.ParsedDocument) (string, error) {
+	rows := make([]parsedDatasetHashDocument, 0, len(documents))
+	for _, document := range documents {
+		if document == nil {
+			return "", errors.New("nil parsed document")
+		}
+		rows = append(rows, parsedDatasetHashDocument{
+			Chunks: len(document.Chunks), DocumentID: document.DocumentId, SourceHash: document.SourceHash,
+		})
+	}
+	canonical, err := json.Marshal(parsedDatasetHashPayload{Documents: rows, ManifestSHA256: manifestSHA})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func parsedMetadataString(metadata map[string]any, key string) (string, bool) {
+	value, exists := metadata[key]
+	if !exists {
+		return "", false
+	}
+	if value == nil {
+		return "", true
+	}
+	text, ok := value.(string)
+	return text, ok
+}
+
+func validEffectiveDateRange(from, to string) bool {
+	var fromDate, toDate time.Time
+	var err error
+	if from != "" {
+		fromDate, err = time.Parse("2006-01-02", from)
+		if err != nil {
+			return false
+		}
+	}
+	if to != "" {
+		toDate, err = time.Parse("2006-01-02", to)
+		if err != nil {
+			return false
+		}
+	}
+	return from == "" || to == "" || toDate.After(fromDate)
+}
+
+func validateParsedPackage(claim *ingestClaim, parsed *ragv1.ParsePackageResponse) error {
+	qualityError := func(code, message string) error {
+		return &ingestParseQualityError{code: code, message: message}
+	}
+	if claim == nil {
+		return qualityError("parse_claim_invalid", "queued package identity is invalid")
+	}
+	if parsed == nil {
+		return qualityError("parse_empty_response", "parser returned an empty response")
+	}
+	if !validSHA256Hex(claim.ManifestSHA) || !validSHA256Hex(parsed.ManifestSha256) ||
+		parsed.ManifestSha256 != claim.ManifestSHA {
+		return qualityError("parse_manifest_binding_invalid", "parser manifest does not match the queued package")
+	}
+	if parsed.PipelineVersion == "" || !validSHA256Hex(parsed.DatasetSha256) {
+		return qualityError("parse_dataset_identity_invalid", "parser dataset identity is invalid")
+	}
+	if len(claim.Files) == 0 || len(parsed.Documents) == 0 {
+		return qualityError("parse_empty_documents", "parser returned no documents")
+	}
+	if len(parsed.Documents) != len(claim.Files) {
+		return qualityError("parse_document_count_mismatch", "parser document count does not match queued files")
+	}
+	filesByPath := make(map[string]ingestClaimFile, len(claim.Files))
+	seenFileDocuments := make(map[string]struct{}, len(claim.Files))
+	for _, file := range claim.Files {
+		if file.Path == "" || file.DocumentID == "" || !validSHA256Hex(file.SourceHash) {
+			return qualityError("parse_file_identity_invalid", "queued package file identity is invalid")
+		}
+		if _, exists := filesByPath[file.Path]; exists {
+			return qualityError("parse_duplicate_file_path", "queued package contains a duplicate file path")
+		}
+		if _, exists := seenFileDocuments[file.DocumentID]; exists {
+			return qualityError("parse_duplicate_file_document", "queued package contains a duplicate document")
+		}
+		digest := sha256.Sum256(file.Content)
+		if hex.EncodeToString(digest[:]) != file.SourceHash {
+			return qualityError("parse_source_hash_mismatch", "queued file content does not match its source hash")
+		}
+		filesByPath[file.Path] = file
+		seenFileDocuments[file.DocumentID] = struct{}{}
+	}
+	seenPaths := make(map[string]struct{}, len(parsed.Documents))
+	seenDocuments := make(map[string]struct{}, len(parsed.Documents))
+	disclosureClasses := map[string]struct{}{"external_allowed": {}, "internal_only": {}, "unclassified": {}}
+	contentTypes := map[string]struct{}{"text": {}, "heading": {}, "table": {}, "image": {}, "list": {}, "code": {}}
+	splitReasons := map[string]struct{}{
+		"text_boundary": {}, "heading_boundary": {}, "table_boundary": {}, "image_boundary": {}, "list_boundary": {}, "code_boundary": {},
+		"sentence_boundary": {}, "hard_split": {}, "element_boundary": {},
+	}
+	for _, document := range parsed.Documents {
+		if document == nil || document.DocumentId == "" || document.Path == "" {
+			return qualityError("parse_document_identity_invalid", "parser returned an invalid document identity")
+		}
+		if _, exists := seenDocuments[document.DocumentId]; exists {
+			return qualityError("parse_duplicate_document", "parser returned a duplicate document")
+		}
+		seenDocuments[document.DocumentId] = struct{}{}
+		if _, exists := seenPaths[document.Path]; exists {
+			return qualityError("parse_duplicate_path", "parser returned a duplicate document path")
+		}
+		seenPaths[document.Path] = struct{}{}
+		file, exists := filesByPath[document.Path]
+		if !exists || file.DocumentID != document.DocumentId || file.SourceHash != document.SourceHash {
+			return qualityError("parse_document_binding_invalid", "parser document does not match the queued file")
+		}
+		if document.Title == "" || (document.Format != "markdown" && document.Format != "csv" && document.Format != "docx") {
+			return qualityError("parse_document_metadata_invalid", "parser returned invalid document metadata")
+		}
+		if _, valid := disclosureClasses[document.DisclosureClass]; !valid || document.ExternalAllowed ||
+			!validEffectiveDateRange(document.EffectiveFrom, document.EffectiveTo) {
+			return qualityError("parse_document_metadata_invalid", "parser returned invalid document metadata")
+		}
+		if len(document.Chunks) == 0 {
+			return qualityError("parse_empty_chunks", "parser returned no content chunks")
+		}
+		seenChunks := make(map[string]struct{}, len(document.Chunks))
+		currentSection, currentSectionIndex := int32(0), int32(-1)
+		for index, chunk := range document.Chunks {
+			if chunk == nil || strings.TrimSpace(chunk.Content) == "" {
+				return qualityError("parse_empty_chunk", "parser returned an empty content chunk")
+			}
+			if chunk.ChunkIndex != int32(index) || chunk.SectionSeq < 1 || chunk.SectionChunkIndex < 0 {
+				return qualityError("parse_chunk_position_invalid", "parser returned an invalid chunk position")
+			}
+			if index == 0 {
+				if chunk.SectionSeq != 1 || chunk.SectionChunkIndex != 0 {
+					return qualityError("parse_chunk_position_invalid", "parser returned an invalid chunk position")
+				}
+			} else if chunk.SectionSeq == currentSection {
+				if chunk.SectionChunkIndex != currentSectionIndex+1 {
+					return qualityError("parse_chunk_position_invalid", "parser returned an invalid chunk position")
+				}
+			} else if chunk.SectionSeq != currentSection+1 || chunk.SectionChunkIndex != 0 {
+				return qualityError("parse_chunk_position_invalid", "parser returned an invalid chunk position")
+			}
+			currentSection, currentSectionIndex = chunk.SectionSeq, chunk.SectionChunkIndex
+			if chunk.CharStart < 0 || chunk.CharEnd <= chunk.CharStart || !utf8.ValidString(chunk.Content) ||
+				int(chunk.CharEnd-chunk.CharStart) != utf8.RuneCountInString(chunk.Content) {
+				return qualityError("parse_chunk_source_invalid", "parser returned an invalid chunk source range")
+			}
+			if !validSHA256Hex(chunk.ChunkHash) {
+				return qualityError("parse_chunk_hash_invalid", "parser returned an invalid chunk hash")
+			}
+			if _, exists := seenChunks[chunk.ChunkHash]; exists {
+				return qualityError("parse_duplicate_chunk", "parser returned a duplicate chunk hash")
+			}
+			seenChunks[chunk.ChunkHash] = struct{}{}
+			if chunk.TokenCount < 1 || chunk.TokenCount > 1024 || !utf8.ValidString(chunk.MetadataJson) ||
+				!json.Valid([]byte(chunk.MetadataJson)) {
+				return qualityError("parse_chunk_metadata_invalid", "parser returned invalid chunk metadata")
+			}
+			if _, valid := contentTypes[chunk.ContentType]; !valid {
+				return qualityError("parse_chunk_metadata_invalid", "parser returned invalid chunk metadata")
+			}
+			if _, valid := splitReasons[chunk.SplitReason]; !valid {
+				return qualityError("parse_chunk_metadata_invalid", "parser returned invalid chunk metadata")
+			}
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(chunk.MetadataJson), &metadata); err != nil || metadata == nil {
+				return qualityError("parse_chunk_metadata_invalid", "parser returned invalid chunk metadata")
+			}
+			metadataTenant, tenantOK := parsedMetadataString(metadata, "tenant_id")
+			metadataShop, shopOK := parsedMetadataString(metadata, "shop_id")
+			metadataHash, hashOK := parsedMetadataString(metadata, "source_hash")
+			metadataDisclosure, disclosureOK := parsedMetadataString(metadata, "disclosure_class")
+			metadataFrom, fromOK := parsedMetadataString(metadata, "effective_from")
+			metadataTo, toOK := parsedMetadataString(metadata, "effective_to")
+			if !tenantOK || !shopOK || !hashOK || !disclosureOK || !fromOK || !toOK ||
+				metadataTenant != strconv.FormatInt(claim.TenantID, 10) || metadataShop != claim.ShopID ||
+				metadataHash != file.SourceHash || metadataDisclosure != document.DisclosureClass ||
+				metadataFrom != document.EffectiveFrom || metadataTo != document.EffectiveTo {
+				return qualityError("parse_chunk_metadata_binding_invalid", "parser chunk metadata does not match its document scope")
+			}
+		}
+	}
+	datasetSHA, err := parsedDatasetSHA256(parsed.ManifestSha256, parsed.Documents)
+	if err != nil || datasetSHA != parsed.DatasetSha256 {
+		return qualityError("parse_dataset_hash_mismatch", "parser dataset hash does not match its documents")
+	}
+	return nil
+}
 
 func (g *gateway) queuePackage(ctx context.Context, manifest string, files []*ragv1.PackageFile,
 	tenantID, userID int64, shopID string) (queuedPackage, error) {
@@ -527,6 +749,11 @@ func (g *gateway) processIngestClaim(parent context.Context, claim *ingestClaim)
 		state, settleErr := g.settleIngestFailure(claim, code, retryable)
 		return state, settleErr
 	}
+	if parsed == nil {
+		cancelParse()
+		state, settleErr := g.settleIngestFailure(claim, "parse_empty_response", false)
+		return state, settleErr
+	}
 	if parsed.ManifestSha256 != claim.ManifestSHA {
 		cancelParse()
 		state, settleErr := g.settleIngestFailure(claim, "manifest_changed", false)
@@ -543,6 +770,11 @@ func (g *gateway) processIngestClaim(parent context.Context, claim *ingestClaim)
 	var conflict *adminConflictError
 	if errors.As(completeErr, &conflict) {
 		state, settleErr := g.settleIngestFailure(claim, "document_conflict", false)
+		return state, settleErr
+	}
+	var qualityErr *ingestParseQualityError
+	if errors.As(completeErr, &qualityErr) {
+		state, settleErr := g.settleIngestFailure(claim, qualityErr.code, false)
 		return state, settleErr
 	}
 	return "completion_deferred", completeErr
@@ -584,6 +816,9 @@ func (g *gateway) renewIngestClaim(ctx context.Context, claim *ingestClaim) (boo
 
 func (g *gateway) completeParsedIngestClaim(ctx context.Context, claim *ingestClaim,
 	parsed *ragv1.ParsePackageResponse) error {
+	if err := validateParsedPackage(claim, parsed); err != nil {
+		return err
+	}
 	tx, err := g.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err

@@ -137,6 +137,58 @@ def test_process_rejects_missing_invalid_and_duplicate_content_lists(tmp_path: P
                 output_root=tmp_path / "out", tenant_id="lab", shop_id="shop")
 
 
+def test_process_rejects_empty_elements_without_writing_empty_artifacts(tmp_path: Path):
+    import pytest
+
+    artifact = tmp_path / "empty"
+    artifact.mkdir()
+    (artifact / "content_list.json").write_text("[]", encoding="utf-8")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="parsed_elements_empty"):
+        process(artifact, document_id="empty-doc", version_id="v1",
+                output_root=output, tenant_id="lab", shop_id="shop")
+    assert not output.exists()
+
+
+def test_process_rejects_element_sets_that_produce_no_chunks(tmp_path: Path):
+    import pytest
+
+    artifact = tmp_path / "image-only"
+    artifact.mkdir()
+    (artifact / "content_list.json").write_text(json.dumps([{
+        "type": "image", "image_refs": ["images/only.png"], "page_no": 1,
+    }]), encoding="utf-8")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="parsed_chunks_empty"):
+        process(artifact, document_id="image-doc", version_id="v1",
+                output_root=output, tenant_id="lab", shop_id="shop")
+    assert not output.exists()
+
+
+def test_process_cleans_staging_when_artifact_write_fails(tmp_path: Path, monkeypatch):
+    import pytest
+
+    artifact = tmp_path / "write-failure"
+    artifact.mkdir()
+    (artifact / "content_list.json").write_text(json.dumps([{
+        "type": "text", "text": "content", "page_no": 1,
+    }]), encoding="utf-8")
+    output = tmp_path / "output"
+    original = __import__("scripts.process_mineru_result", fromlist=["_write_atomic"])._write_atomic
+
+    def fail_once(path, data):
+        raise OSError("synthetic write failure")
+
+    monkeypatch.setattr("scripts.process_mineru_result._write_atomic", fail_once)
+    with pytest.raises(OSError, match="synthetic write failure"):
+        process(artifact, document_id="write-doc", version_id="v1",
+                output_root=output, tenant_id="lab", shop_id="shop")
+    assert not list(output.glob(".mineru-stage-*"))
+    assert not (output / "parsed").exists()
+    assert not (output / "chunks").exists()
+    monkeypatch.setattr("scripts.process_mineru_result._write_atomic", original)
+
+
 def test_report_does_not_guess_task_id_when_multiple_tasks_exist(tmp_path: Path):
     task_root = tmp_path / "task-artifacts"
     for task_id in ("task-a", "task-b"):
