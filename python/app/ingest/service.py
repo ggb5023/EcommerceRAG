@@ -61,12 +61,81 @@ def _delete_bundles(store: ObjectStore | None, bundles: list[ArtifactBundle]) ->
         return True
     clean = True
     for bundle in reversed(bundles):
-        for record in reversed(bundle.all_records):
-            try:
-                store.delete(record.object_key)
-            except Exception:  # noqa: BLE001 - abort path must stay redacted
-                clean = False
+        if not _delete_keys(store, [record.object_key for record in bundle.all_records]):
+            clean = False
     return clean
+
+
+def _delete_keys(store: ObjectStore, keys: list[str]) -> bool:
+    clean = True
+    for key in reversed(keys):
+        try:
+            store.delete(key)
+        except Exception:  # noqa: BLE001 - abort path must stay redacted
+            clean = False
+    return clean
+
+
+def _artifact_cleanup_keys(request, context) -> list[str]:
+    """Validate an internal bundle reference before allowing deletion."""
+
+    tenant_id, shop_id = request.tenant_id, request.shop_id
+    reference = request.artifact_bundle
+    if not tenant_id or not shop_id or reference is None:
+        _fail(context, "artifact cleanup reference is invalid")
+    version_id = reference.document_version_id
+    if not re.fullmatch(r"v-[0-9a-f]{20}", version_id):
+        _fail(context, "artifact cleanup reference is invalid")
+
+    manifest_parts = reference.manifest_object_key.split("/")
+    if (
+        len(manifest_parts) != 5
+        or manifest_parts[:3] != [tenant_id, shop_id, version_id]
+        or manifest_parts[3] != "artifact-manifest"
+        or manifest_parts[4] != reference.manifest_sha256
+        or not SHA256.fullmatch(reference.manifest_sha256)
+    ):
+        _fail(context, "artifact cleanup reference is invalid")
+
+    required = {"chunks", "parse-report", "parsed", "raw"}
+    records = []
+    seen = set()
+    for record in reference.artifacts:
+        artifact_type = record.artifact_type
+        parts = record.object_key.split("/")
+        if (
+            artifact_type not in required
+            or artifact_type in seen
+            or record.size_bytes <= 0
+            or not record.content_type
+            or not SHA256.fullmatch(record.sha256)
+            or len(parts) != 5
+            or parts[:3] != [tenant_id, shop_id, version_id]
+            or parts[3] != artifact_type
+            or parts[4] != record.sha256
+        ):
+            _fail(context, "artifact cleanup reference is invalid")
+        seen.add(artifact_type)
+        records.append(record)
+    if seen != required:
+        _fail(context, "artifact cleanup reference is invalid")
+
+    canonical = [
+        {
+            "artifact_type": record.artifact_type,
+            "content_type": record.content_type,
+            "object_key": record.object_key,
+            "sha256": record.sha256,
+            "size_bytes": record.size_bytes,
+        }
+        for record in sorted(records, key=lambda item: item.artifact_type)
+    ]
+    artifact_set = hashlib.sha256(
+        json.dumps({"artifacts": canonical}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if artifact_set != reference.artifact_set_sha256 or reference.real_service_acceptance:
+        _fail(context, "artifact cleanup reference is invalid")
+    return [record.object_key for record in records] + [reference.manifest_object_key]
 
 
 def _bundle_reference(response, bundle: ArtifactBundle) -> None:
@@ -353,6 +422,20 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
         ).encode()
         response.dataset_sha256 = hashlib.sha256(canonical).hexdigest()
         return response
+
+    def DeleteArtifactBundle(self, request, context):
+        keys = _artifact_cleanup_keys(request, context)
+        try:
+            store = _artifact_store()
+        except (OSError, RuntimeError, ValueError):
+            _fail(context, "artifact cleanup storage is unavailable")
+        if store is None:
+            _fail(context, "artifact cleanup storage is unavailable")
+        complete = _delete_keys(store, keys)
+        return rag_pb2.DeleteArtifactBundleResponse(
+            complete=complete,
+            error_code="" if complete else "cleanup_incomplete",
+        )
 
 
 def register(server) -> None:

@@ -78,6 +78,8 @@ type adminJobConfirmation struct {
 }
 
 var errIngestLeaseLost = errors.New("ingest lease lost")
+var errIngestCommitUnknown = errors.New("ingest database commit status is unknown")
+var errIngestArtifactCleanup = errors.New("artifact cleanup incomplete")
 
 type ingestParseQualityError struct {
 	code    string
@@ -939,6 +941,17 @@ func (g *gateway) processIngestClaim(parent context.Context, claim *ingestClaim)
 	if errors.Is(completeErr, errIngestLeaseLost) {
 		return "lease_lost", completeErr
 	}
+	if errors.Is(completeErr, errIngestCommitUnknown) {
+		return "completion_deferred", completeErr
+	}
+	cleanupErr := g.cleanupParsedArtifacts(claim, parsed)
+	if cleanupErr != nil {
+		state, settleErr := g.settleIngestFailure(claim, "artifact_cleanup_incomplete", false)
+		if settleErr != nil {
+			return "deferred", settleErr
+		}
+		return state, cleanupErr
+	}
 	var conflict *adminConflictError
 	if errors.As(completeErr, &conflict) {
 		state, settleErr := g.settleIngestFailure(claim, "document_conflict", false)
@@ -950,6 +963,29 @@ func (g *gateway) processIngestClaim(parent context.Context, claim *ingestClaim)
 		return state, settleErr
 	}
 	return "completion_deferred", completeErr
+}
+
+func (g *gateway) cleanupParsedArtifacts(claim *ingestClaim, parsed *ragv1.ParsePackageResponse) error {
+	if claim == nil || parsed == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, document := range parsed.Documents {
+		if document == nil || document.ArtifactBundle == nil {
+			continue
+		}
+		response, err := g.ingest.DeleteArtifactBundle(ctx, &ragv1.DeleteArtifactBundleRequest{
+			TenantId:       strconv.FormatInt(claim.TenantID, 10),
+			ShopId:         claim.ShopID,
+			ArtifactBundle: document.ArtifactBundle,
+		})
+		_ = response
+		if err != nil || response == nil || !response.Complete {
+			return errIngestArtifactCleanup
+		}
+	}
+	return nil
 }
 
 func (g *gateway) renewIngestClaim(ctx context.Context, claim *ingestClaim) (bool, error) {
@@ -1147,7 +1183,10 @@ func (g *gateway) completeParsedIngestClaim(ctx context.Context, claim *ingestCl
 		map[string]any{"shop_id": shopID, "document_count": len(parsed.Documents)}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return errIngestCommitUnknown
+	}
+	return nil
 }
 
 func stringPointer(value string) *string {

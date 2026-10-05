@@ -2571,6 +2571,118 @@ func (x *ParsePackageResponse) GetManifestYaml() string {
 	return ""
 }
 
+type DeleteArtifactBundleRequest struct {
+	state          protoimpl.MessageState   `protogen:"open.v1"`
+	TenantId       string                   `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	ShopId         string                   `protobuf:"bytes,2,opt,name=shop_id,json=shopId,proto3" json:"shop_id,omitempty"`
+	ArtifactBundle *ArtifactBundleReference `protobuf:"bytes,3,opt,name=artifact_bundle,json=artifactBundle,proto3" json:"artifact_bundle,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DeleteArtifactBundleRequest) Reset() {
+	*x = DeleteArtifactBundleRequest{}
+	mi := &file_rag_v1_rag_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteArtifactBundleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteArtifactBundleRequest) ProtoMessage() {}
+
+func (x *DeleteArtifactBundleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rag_v1_rag_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteArtifactBundleRequest.ProtoReflect.Descriptor instead.
+func (*DeleteArtifactBundleRequest) Descriptor() ([]byte, []int) {
+	return file_rag_v1_rag_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *DeleteArtifactBundleRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *DeleteArtifactBundleRequest) GetShopId() string {
+	if x != nil {
+		return x.ShopId
+	}
+	return ""
+}
+
+func (x *DeleteArtifactBundleRequest) GetArtifactBundle() *ArtifactBundleReference {
+	if x != nil {
+		return x.ArtifactBundle
+	}
+	return nil
+}
+
+type DeleteArtifactBundleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Complete      bool                   `protobuf:"varint,1,opt,name=complete,proto3" json:"complete,omitempty"`
+	ErrorCode     string                 `protobuf:"bytes,2,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteArtifactBundleResponse) Reset() {
+	*x = DeleteArtifactBundleResponse{}
+	mi := &file_rag_v1_rag_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteArtifactBundleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteArtifactBundleResponse) ProtoMessage() {}
+
+func (x *DeleteArtifactBundleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_rag_v1_rag_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteArtifactBundleResponse.ProtoReflect.Descriptor instead.
+func (*DeleteArtifactBundleResponse) Descriptor() ([]byte, []int) {
+	return file_rag_v1_rag_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *DeleteArtifactBundleResponse) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+func (x *DeleteArtifactBundleResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
 var File_rag_v1_rag_proto protoreflect.FileDescriptor
 
 const file_rag_v1_rag_proto_rawDesc = "" +
@@ -2821,7 +2933,15 @@ const file_rag_v1_rag_proto_rawDesc = "" +
 	"\x0fmanifest_sha256\x18\x04 \x01(\tR\x0emanifestSha256\x12%\n" +
 	"\x0edataset_sha256\x18\x05 \x01(\tR\rdatasetSha256\x124\n" +
 	"\tdocuments\x18\x06 \x03(\v2\x16.rag.v1.ParsedDocumentR\tdocuments\x12#\n" +
-	"\rmanifest_yaml\x18\a \x01(\tR\fmanifestYaml*\x9d\x01\n" +
+	"\rmanifest_yaml\x18\a \x01(\tR\fmanifestYaml\"\x9d\x01\n" +
+	"\x1bDeleteArtifactBundleRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
+	"\ashop_id\x18\x02 \x01(\tR\x06shopId\x12H\n" +
+	"\x0fartifact_bundle\x18\x03 \x01(\v2\x1f.rag.v1.ArtifactBundleReferenceR\x0eartifactBundle\"Y\n" +
+	"\x1cDeleteArtifactBundleResponse\x12\x1a\n" +
+	"\bcomplete\x18\x01 \x01(\bR\bcomplete\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x02 \x01(\tR\terrorCode*\x9d\x01\n" +
 	"\tJobStatus\x12\x1a\n" +
 	"\x16JOB_STATUS_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12JOB_STATUS_PENDING\x10\x01\x12\x16\n" +
@@ -2835,13 +2955,14 @@ const file_rag_v1_rag_proto_rawDesc = "" +
 	"Understand\x12\x19.rag.v1.UnderstandRequest\x1a\x1a.rag.v1.UnderstandResponse\x129\n" +
 	"\x06Search\x12\x15.rag.v1.SearchRequest\x1a\x16.rag.v1.SearchResponse0\x01\x12?\n" +
 	"\bGenerate\x12\x17.rag.v1.GenerateRequest\x1a\x18.rag.v1.GenerateResponse0\x01\x12a\n" +
-	"\x14ReloadSyntheticIndex\x12#.rag.v1.ReloadSyntheticIndexRequest\x1a$.rag.v1.ReloadSyntheticIndexResponse2\xe2\x02\n" +
+	"\x14ReloadSyntheticIndex\x12#.rag.v1.ReloadSyntheticIndexRequest\x1a$.rag.v1.ReloadSyntheticIndexResponse2\xc5\x03\n" +
 	"\rIngestService\x127\n" +
 	"\x06Submit\x12\x15.rag.v1.SubmitRequest\x1a\x16.rag.v1.SubmitResponse\x12@\n" +
 	"\tGetStatus\x12\x18.rag.v1.GetStatusRequest\x1a\x19.rag.v1.GetStatusResponse\x127\n" +
 	"\x06Cancel\x12\x15.rag.v1.CancelRequest\x1a\x16.rag.v1.CancelResponse\x12R\n" +
 	"\x0fValidatePackage\x12\x1e.rag.v1.ValidatePackageRequest\x1a\x1f.rag.v1.ValidatePackageResponse\x12I\n" +
-	"\fParsePackage\x12\x1b.rag.v1.ParsePackageRequest\x1a\x1c.rag.v1.ParsePackageResponseB=Z;github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1;ragv1b\x06proto3"
+	"\fParsePackage\x12\x1b.rag.v1.ParsePackageRequest\x1a\x1c.rag.v1.ParsePackageResponse\x12a\n" +
+	"\x14DeleteArtifactBundle\x12#.rag.v1.DeleteArtifactBundleRequest\x1a$.rag.v1.DeleteArtifactBundleResponseB=Z;github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1;ragv1b\x06proto3"
 
 var (
 	file_rag_v1_rag_proto_rawDescOnce sync.Once
@@ -2856,7 +2977,7 @@ func file_rag_v1_rag_proto_rawDescGZIP() []byte {
 }
 
 var file_rag_v1_rag_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_rag_v1_rag_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_rag_v1_rag_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_rag_v1_rag_proto_goTypes = []any{
 	(JobStatus)(0),                       // 0: rag.v1.JobStatus
 	(*RequestContext)(nil),               // 1: rag.v1.RequestContext
@@ -2888,6 +3009,8 @@ var file_rag_v1_rag_proto_goTypes = []any{
 	(*ArtifactRecord)(nil),               // 27: rag.v1.ArtifactRecord
 	(*ArtifactBundleReference)(nil),      // 28: rag.v1.ArtifactBundleReference
 	(*ParsePackageResponse)(nil),         // 29: rag.v1.ParsePackageResponse
+	(*DeleteArtifactBundleRequest)(nil),  // 30: rag.v1.DeleteArtifactBundleRequest
+	(*DeleteArtifactBundleResponse)(nil), // 31: rag.v1.DeleteArtifactBundleResponse
 }
 var file_rag_v1_rag_proto_depIdxs = []int32{
 	1,  // 0: rag.v1.UnderstandRequest.context:type_name -> rag.v1.RequestContext
@@ -2913,29 +3036,32 @@ var file_rag_v1_rag_proto_depIdxs = []int32{
 	28, // 20: rag.v1.ParsedDocument.artifact_bundle:type_name -> rag.v1.ArtifactBundleReference
 	27, // 21: rag.v1.ArtifactBundleReference.artifacts:type_name -> rag.v1.ArtifactRecord
 	26, // 22: rag.v1.ParsePackageResponse.documents:type_name -> rag.v1.ParsedDocument
-	4,  // 23: rag.v1.RagService.Understand:input_type -> rag.v1.UnderstandRequest
-	7,  // 24: rag.v1.RagService.Search:input_type -> rag.v1.SearchRequest
-	9,  // 25: rag.v1.RagService.Generate:input_type -> rag.v1.GenerateRequest
-	11, // 26: rag.v1.RagService.ReloadSyntheticIndex:input_type -> rag.v1.ReloadSyntheticIndexRequest
-	14, // 27: rag.v1.IngestService.Submit:input_type -> rag.v1.SubmitRequest
-	16, // 28: rag.v1.IngestService.GetStatus:input_type -> rag.v1.GetStatusRequest
-	18, // 29: rag.v1.IngestService.Cancel:input_type -> rag.v1.CancelRequest
-	22, // 30: rag.v1.IngestService.ValidatePackage:input_type -> rag.v1.ValidatePackageRequest
-	21, // 31: rag.v1.IngestService.ParsePackage:input_type -> rag.v1.ParsePackageRequest
-	5,  // 32: rag.v1.RagService.Understand:output_type -> rag.v1.UnderstandResponse
-	8,  // 33: rag.v1.RagService.Search:output_type -> rag.v1.SearchResponse
-	10, // 34: rag.v1.RagService.Generate:output_type -> rag.v1.GenerateResponse
-	13, // 35: rag.v1.RagService.ReloadSyntheticIndex:output_type -> rag.v1.ReloadSyntheticIndexResponse
-	15, // 36: rag.v1.IngestService.Submit:output_type -> rag.v1.SubmitResponse
-	17, // 37: rag.v1.IngestService.GetStatus:output_type -> rag.v1.GetStatusResponse
-	19, // 38: rag.v1.IngestService.Cancel:output_type -> rag.v1.CancelResponse
-	24, // 39: rag.v1.IngestService.ValidatePackage:output_type -> rag.v1.ValidatePackageResponse
-	29, // 40: rag.v1.IngestService.ParsePackage:output_type -> rag.v1.ParsePackageResponse
-	32, // [32:41] is the sub-list for method output_type
-	23, // [23:32] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	28, // 23: rag.v1.DeleteArtifactBundleRequest.artifact_bundle:type_name -> rag.v1.ArtifactBundleReference
+	4,  // 24: rag.v1.RagService.Understand:input_type -> rag.v1.UnderstandRequest
+	7,  // 25: rag.v1.RagService.Search:input_type -> rag.v1.SearchRequest
+	9,  // 26: rag.v1.RagService.Generate:input_type -> rag.v1.GenerateRequest
+	11, // 27: rag.v1.RagService.ReloadSyntheticIndex:input_type -> rag.v1.ReloadSyntheticIndexRequest
+	14, // 28: rag.v1.IngestService.Submit:input_type -> rag.v1.SubmitRequest
+	16, // 29: rag.v1.IngestService.GetStatus:input_type -> rag.v1.GetStatusRequest
+	18, // 30: rag.v1.IngestService.Cancel:input_type -> rag.v1.CancelRequest
+	22, // 31: rag.v1.IngestService.ValidatePackage:input_type -> rag.v1.ValidatePackageRequest
+	21, // 32: rag.v1.IngestService.ParsePackage:input_type -> rag.v1.ParsePackageRequest
+	30, // 33: rag.v1.IngestService.DeleteArtifactBundle:input_type -> rag.v1.DeleteArtifactBundleRequest
+	5,  // 34: rag.v1.RagService.Understand:output_type -> rag.v1.UnderstandResponse
+	8,  // 35: rag.v1.RagService.Search:output_type -> rag.v1.SearchResponse
+	10, // 36: rag.v1.RagService.Generate:output_type -> rag.v1.GenerateResponse
+	13, // 37: rag.v1.RagService.ReloadSyntheticIndex:output_type -> rag.v1.ReloadSyntheticIndexResponse
+	15, // 38: rag.v1.IngestService.Submit:output_type -> rag.v1.SubmitResponse
+	17, // 39: rag.v1.IngestService.GetStatus:output_type -> rag.v1.GetStatusResponse
+	19, // 40: rag.v1.IngestService.Cancel:output_type -> rag.v1.CancelResponse
+	24, // 41: rag.v1.IngestService.ValidatePackage:output_type -> rag.v1.ValidatePackageResponse
+	29, // 42: rag.v1.IngestService.ParsePackage:output_type -> rag.v1.ParsePackageResponse
+	31, // 43: rag.v1.IngestService.DeleteArtifactBundle:output_type -> rag.v1.DeleteArtifactBundleResponse
+	34, // [34:44] is the sub-list for method output_type
+	24, // [24:34] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_rag_v1_rag_proto_init() }
@@ -2958,7 +3084,7 @@ func file_rag_v1_rag_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rag_v1_rag_proto_rawDesc), len(file_rag_v1_rag_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   29,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

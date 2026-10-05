@@ -242,11 +242,12 @@ var RagService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	IngestService_Submit_FullMethodName          = "/rag.v1.IngestService/Submit"
-	IngestService_GetStatus_FullMethodName       = "/rag.v1.IngestService/GetStatus"
-	IngestService_Cancel_FullMethodName          = "/rag.v1.IngestService/Cancel"
-	IngestService_ValidatePackage_FullMethodName = "/rag.v1.IngestService/ValidatePackage"
-	IngestService_ParsePackage_FullMethodName    = "/rag.v1.IngestService/ParsePackage"
+	IngestService_Submit_FullMethodName               = "/rag.v1.IngestService/Submit"
+	IngestService_GetStatus_FullMethodName            = "/rag.v1.IngestService/GetStatus"
+	IngestService_Cancel_FullMethodName               = "/rag.v1.IngestService/Cancel"
+	IngestService_ValidatePackage_FullMethodName      = "/rag.v1.IngestService/ValidatePackage"
+	IngestService_ParsePackage_FullMethodName         = "/rag.v1.IngestService/ParsePackage"
+	IngestService_DeleteArtifactBundle_FullMethodName = "/rag.v1.IngestService/DeleteArtifactBundle"
 )
 
 // IngestServiceClient is the client API for IngestService service.
@@ -258,6 +259,8 @@ type IngestServiceClient interface {
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
 	ValidatePackage(ctx context.Context, in *ValidatePackageRequest, opts ...grpc.CallOption) (*ValidatePackageResponse, error)
 	ParsePackage(ctx context.Context, in *ParsePackageRequest, opts ...grpc.CallOption) (*ParsePackageResponse, error)
+	// Internal synthetic-ingest cleanup after a database transaction rolls back.
+	DeleteArtifactBundle(ctx context.Context, in *DeleteArtifactBundleRequest, opts ...grpc.CallOption) (*DeleteArtifactBundleResponse, error)
 }
 
 type ingestServiceClient struct {
@@ -318,6 +321,16 @@ func (c *ingestServiceClient) ParsePackage(ctx context.Context, in *ParsePackage
 	return out, nil
 }
 
+func (c *ingestServiceClient) DeleteArtifactBundle(ctx context.Context, in *DeleteArtifactBundleRequest, opts ...grpc.CallOption) (*DeleteArtifactBundleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteArtifactBundleResponse)
+	err := c.cc.Invoke(ctx, IngestService_DeleteArtifactBundle_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IngestServiceServer is the server API for IngestService service.
 // All implementations must embed UnimplementedIngestServiceServer
 // for forward compatibility.
@@ -327,6 +340,8 @@ type IngestServiceServer interface {
 	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
 	ValidatePackage(context.Context, *ValidatePackageRequest) (*ValidatePackageResponse, error)
 	ParsePackage(context.Context, *ParsePackageRequest) (*ParsePackageResponse, error)
+	// Internal synthetic-ingest cleanup after a database transaction rolls back.
+	DeleteArtifactBundle(context.Context, *DeleteArtifactBundleRequest) (*DeleteArtifactBundleResponse, error)
 	mustEmbedUnimplementedIngestServiceServer()
 }
 
@@ -351,6 +366,9 @@ func (UnimplementedIngestServiceServer) ValidatePackage(context.Context, *Valida
 }
 func (UnimplementedIngestServiceServer) ParsePackage(context.Context, *ParsePackageRequest) (*ParsePackageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ParsePackage not implemented")
+}
+func (UnimplementedIngestServiceServer) DeleteArtifactBundle(context.Context, *DeleteArtifactBundleRequest) (*DeleteArtifactBundleResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteArtifactBundle not implemented")
 }
 func (UnimplementedIngestServiceServer) mustEmbedUnimplementedIngestServiceServer() {}
 func (UnimplementedIngestServiceServer) testEmbeddedByValue()                       {}
@@ -463,6 +481,24 @@ func _IngestService_ParsePackage_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IngestService_DeleteArtifactBundle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteArtifactBundleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IngestServiceServer).DeleteArtifactBundle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IngestService_DeleteArtifactBundle_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IngestServiceServer).DeleteArtifactBundle(ctx, req.(*DeleteArtifactBundleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IngestService_ServiceDesc is the grpc.ServiceDesc for IngestService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -489,6 +525,10 @@ var IngestService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ParsePackage",
 			Handler:    _IngestService_ParsePackage_Handler,
+		},
+		{
+			MethodName: "DeleteArtifactBundle",
+			Handler:    _IngestService_DeleteArtifactBundle_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

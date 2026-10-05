@@ -5,11 +5,24 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	ragv1 "github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1"
+	"google.golang.org/grpc"
 )
+
+type cleanupIngestClient struct {
+	ragv1.IngestServiceClient
+	response *ragv1.DeleteArtifactBundleResponse
+	request  *ragv1.DeleteArtifactBundleRequest
+}
+
+func (c *cleanupIngestClient) DeleteArtifactBundle(_ context.Context, request *ragv1.DeleteArtifactBundleRequest, _ ...grpc.CallOption) (*ragv1.DeleteArtifactBundleResponse, error) {
+	c.request = request
+	return c.response, nil
+}
 
 func parsedPackageFixture() (*ingestClaim, *ragv1.ParsePackageResponse) {
 	content := []byte("hello")
@@ -324,5 +337,35 @@ func TestValidateArtifactBundleRejectsCrossVersionOrTypeBinding(t *testing.T) {
 	)
 	if _, err := validateArtifactBundle(document); err == nil {
 		t.Fatal("expected artifact type/object key mismatch to fail")
+	}
+}
+
+func TestCleanupParsedArtifactsUsesInternalDeleteContract(t *testing.T) {
+	document := artifactBoundDocument()
+	client := &cleanupIngestClient{response: &ragv1.DeleteArtifactBundleResponse{Complete: true}}
+	gateway := &gateway{ingest: client}
+	claim := &ingestClaim{TenantID: 7, ShopID: "shop-1"}
+	parsed := &ragv1.ParsePackageResponse{Documents: []*ragv1.ParsedDocument{document}}
+
+	if err := gateway.cleanupParsedArtifacts(claim, parsed); err != nil {
+		t.Fatalf("cleanup should succeed: %v", err)
+	}
+	if client.request == nil || client.request.TenantId != "7" || client.request.ShopId != "shop-1" {
+		t.Fatalf("cleanup scope was not forwarded: %#v", client.request)
+	}
+	if client.request.ArtifactBundle == nil || client.request.ArtifactBundle.DocumentVersionId == "" {
+		t.Fatal("cleanup did not forward artifact reference")
+	}
+}
+
+func TestCleanupParsedArtifactsReportsIncompleteResponse(t *testing.T) {
+	document := artifactBoundDocument()
+	client := &cleanupIngestClient{response: &ragv1.DeleteArtifactBundleResponse{Complete: false, ErrorCode: "cleanup_incomplete"}}
+	gateway := &gateway{ingest: client}
+	claim := &ingestClaim{TenantID: 7, ShopID: "shop-1"}
+	parsed := &ragv1.ParsePackageResponse{Documents: []*ragv1.ParsedDocument{document}}
+
+	if err := gateway.cleanupParsedArtifacts(claim, parsed); !errors.Is(err, errIngestArtifactCleanup) {
+		t.Fatalf("expected redacted cleanup error, got %v", err)
 	}
 }

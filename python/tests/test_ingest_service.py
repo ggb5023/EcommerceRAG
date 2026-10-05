@@ -6,10 +6,16 @@ from unittest.mock import patch
 
 import grpc
 
-from app.ingest.artifacts import ArtifactBundle, ArtifactRecord, read_manifest
+from app.ingest.artifacts import (
+    ArtifactBundle,
+    ArtifactInput,
+    ArtifactRecord,
+    read_manifest,
+    store_artifact_bundle,
+)
 from app.ingest.pipeline import parser_for
 from app.ingest.service import IngestService, _delete_bundles
-from app.storage import FilesystemObjectStore
+from app.storage import FilesystemObjectStore, ObjectStoreError
 from rag.v1 import rag_pb2
 
 
@@ -135,6 +141,68 @@ class IngestServiceTests(unittest.TestCase):
             else:
                 self.fail("ParsePackage should reject incomplete artifact cleanup")
         self.assertNotIn("secret", error_text)
+
+    def test_delete_artifact_bundle_removes_validated_bundle(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ",
+            {"RAG_PROFILE": "synthetic_import_mock", "INGEST_ARTIFACT_BUNDLE_ROOT": directory},
+            clear=False,
+        ):
+            store = FilesystemObjectStore(directory)
+            bundle = store_artifact_bundle(
+                store,
+                tenant_id="server-tenant",
+                shop_id="server-shop",
+                document_version_id="v-0123456789abcdef0123",
+                artifacts=(
+                    ArtifactInput("raw", b"raw", "application/octet-stream"),
+                    ArtifactInput("parsed", b"parsed", "application/jsonl"),
+                    ArtifactInput("chunks", b"chunks", "application/jsonl"),
+                    ArtifactInput("parse-report", b"report", "application/json"),
+                ),
+            )
+            request = rag_pb2.DeleteArtifactBundleRequest(
+                tenant_id="server-tenant",
+                shop_id="server-shop",
+                artifact_bundle=rag_pb2.ArtifactBundleReference(
+                    document_version_id=bundle.document_version_id,
+                    manifest_object_key=bundle.manifest.object_key,
+                    manifest_sha256=bundle.manifest.sha256,
+                    artifact_set_sha256=bundle.artifact_set_sha256,
+                    real_service_acceptance=False,
+                    artifacts=[
+                        rag_pb2.ArtifactRecord(
+                            artifact_type=record.artifact_type,
+                            object_key=record.object_key,
+                            sha256=record.sha256,
+                            size_bytes=record.size_bytes,
+                            content_type=record.content_type,
+                        )
+                        for record in bundle.records
+                    ],
+                ),
+            )
+            result = IngestService().DeleteArtifactBundle(request, AbortContext())
+            self.assertTrue(result.complete)
+            for record in bundle.all_records:
+                with self.assertRaises(ObjectStoreError):
+                    store.head(record.object_key)
+
+    def test_delete_artifact_bundle_rejects_scope_and_boundary_changes(self):
+        reference = rag_pb2.ArtifactBundleReference(
+            document_version_id="v-0123456789abcdef0123",
+            manifest_object_key="other-tenant/server-shop/v-0123456789abcdef0123/artifact-manifest/" + "1" * 64,
+            manifest_sha256="1" * 64,
+            artifact_set_sha256="2" * 64,
+            real_service_acceptance=True,
+        )
+        request = rag_pb2.DeleteArtifactBundleRequest(
+            tenant_id="server-tenant", shop_id="server-shop", artifact_bundle=reference
+        )
+        with self.assertRaisesRegex(RuntimeError, "artifact cleanup reference is invalid"):
+            IngestService().DeleteArtifactBundle(request, AbortContext())
 
     def test_parses_manifest_files_and_uses_server_scope(self):
         result = IngestService().ParsePackage(self.make_request(), AbortContext())

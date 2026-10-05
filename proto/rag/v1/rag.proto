@@ -129,6 +129,8 @@ service IngestService {
   rpc Cancel(CancelRequest) returns (CancelResponse);
   rpc ValidatePackage(ValidatePackageRequest) returns (ValidatePackageResponse);
   rpc ParsePackage(ParsePackageRequest) returns (ParsePackageResponse);
+  // Internal synthetic-ingest cleanup after a database transaction rolls back.
+  rpc DeleteArtifactBundle(DeleteArtifactBundleRequest) returns (DeleteArtifactBundleResponse);
 }
 enum JobStatus {
   JOB_STATUS_UNSPECIFIED = 0;
@@ -249,4 +251,13 @@ message ParsePackageResponse {
   string dataset_sha256 = 5;
   repeated ParsedDocument documents = 6;
   string manifest_yaml = 7;
+}
+message DeleteArtifactBundleRequest {
+  string tenant_id = 1;
+  string shop_id = 2;
+  ArtifactBundleReference artifact_bundle = 3;
+}
+message DeleteArtifactBundleResponse {
+  bool complete = 1;
+  string error_code = 2;
 }
