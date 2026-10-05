@@ -132,6 +132,14 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertFalse(gate["real_service_acceptance"])
         self.assertTrue(manifest_sha)
 
+    def test_repository_external_input_gate_is_explicitly_blocked(self):
+        manifest = MODULE_PATH.parent / "m2-external-input-gate.json"
+        gate, manifest_sha = MODULE.m2_gate_status(manifest)
+        self.assertEqual(gate["status"], "BLOCKED")
+        self.assertEqual(len(gate["missing"]), 7)
+        self.assertTrue(manifest_sha)
+        self.assertFalse(gate["real_service_acceptance"])
+
     def test_report_hash_ignores_timestamp(self):
         first = {"run": {"started_at": "2026-01-01T00:00:00Z"}, "results": {"count": 1}}
         second = {"run": {"started_at": "2027-01-01T00:00:00Z"}, "results": {"count": 1}}

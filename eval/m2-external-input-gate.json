@@ -1,0 +1,42 @@
+{
+  "gate_version": "m2-external-input-gate-v1",
+  "status": "BLOCKED",
+  "real_service_acceptance": false,
+  "requirements": {
+    "identity_roles_revocation": {
+      "ready": false,
+      "owner": "identity_owner",
+      "evidence": "identity source, role catalog, revocation SLA"
+    },
+    "tenant_shop_mapping": {
+      "ready": false,
+      "owner": "business_owner",
+      "evidence": "approved tenant/shop mapping"
+    },
+    "material_authorization_external_allowed": {
+      "ready": false,
+      "owner": "business_owner",
+      "evidence": "approved material authorization and external_allowed list"
+    },
+    "business_date_rules": {
+      "ready": false,
+      "owner": "business_owner",
+      "evidence": "effective-date and freshness rules"
+    },
+    "provider_endpoint_region_models": {
+      "ready": false,
+      "owner": "ai_cloud_owner",
+      "evidence": "endpoint, region and four model IDs"
+    },
+    "provider_embedding_quota_usage_request_id": {
+      "ready": false,
+      "owner": "ai_cloud_owner",
+      "evidence": "1024 dimension, quota, usage and request ID contract"
+    },
+    "material_versions_license_redaction": {
+      "ready": false,
+      "owner": "data_owner",
+      "evidence": "material versions, licenses and redaction rules"
+    }
+  }
+}

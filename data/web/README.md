@@ -1,6 +1,6 @@
 # 受控网页来源注册
 
-`source-registry-v1.json` 是当前唯一的网页来源策略入口。它只登记来源、域名/path、许可证与条款审阅、robots、刷新预算和保留策略，不包含网页正文。
+`source-registry-v1.json` 是当前唯一的网页来源策略入口。它只登记来源、域名/path、许可证与条款审阅、robots、刷新预算、保留策略和责任角色，不包含网页正文。`responsibility_contract` 及每条来源的 `responsibility` 记录是 P7 的可审阅责任门禁，当前保持 `pending_review`。
 
 当前三个官方文档来源均为 `pending_review`，active 数量为 0；来源激活门禁仍为 `PENDING_REVIEW`。2026-10-05 的 test-only crawler smoke 对 Shopify Developer 和 WooCommerce 固定入口通过，对 Raspberry Pi 固定入口收到 `http_403`，因此总体为 2/3、`FAIL`；该结果只验证受控失败路径，不代表来源获批或可进入业务链路。首轮来源为 Raspberry Pi、Shopify Developer 和 WooCommerce 官方文档。Tavily 的独立脱敏 smoke 不能绕过来源注册，也不能把搜索结果升级为商品、政策、价格、库存、权限或客服真值。启用来源前必须完成条款/许可证、robots、域名与路径、预算、刷新、保留和责任人审阅，并通过：
 

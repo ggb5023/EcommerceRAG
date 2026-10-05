@@ -77,6 +77,13 @@ stable local run ID, and a fixture hash when supplied; the timestamp is run
 metadata and is not used as an evaluation value. `expected_evidence_rate`
 means only that cases declare expected documents; it is not runtime evidence
 coverage. Source type/version drift is reported as input integrity failure.
+
+`m2-external-input-gate.json` is the checked-in, non-secret responsibility
+record for the seven P7 external-input prerequisites. Every requirement is
+currently `ready=false`; it records the accountable role and required evidence
+without inventing an identity source, merchant authorization, Provider
+credential, or license. Passing the machine check with this manifest reports
+`m2_gate.status=BLOCKED` and never changes `real_service_acceptance`.
 The optional document-ID fixture measures document presence only: this tool
 does not execute Search or Generate, so those values are not query retrieval
 recall or runtime answer quality. The current demo corpus uses different IDs

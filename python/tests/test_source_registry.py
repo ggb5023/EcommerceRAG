@@ -19,6 +19,8 @@ def test_repository_registry_is_pending_and_valid():
     assert report["active_count"] == 0
     assert report["real_service_acceptance"] is False
     registry = json.loads((ROOT / "data/web/source-registry-v1.json").read_text(encoding="utf-8"))
+    assert registry["responsibility_contract"]["gate_status"] == "pending_review"
+    assert all("responsibility" in source for source in registry["sources"])
     assert {
         source["source_id"] for source in registry["sources"]
     } >= {
@@ -38,7 +40,9 @@ def test_active_source_requires_terms_robots_and_freshness(tmp_path: Path):
             "discovery_mode": "fixed_urls", "fixed_urls": ["https://example.com/guide"],
             "terms_review": {"status": "pending"}, "robots_policy": {"status": "pending"},
             "refresh_policy": {}, "content_policy": "pending_review",
+            "responsibility": {"owner": "data_owner", "reviewer_role": "reviewer", "status": "pending", "required_evidence": ["terms_license"]},
         }],
+        "responsibility_contract": {"version": "source-responsibility-v1", "gate_status": "pending_review", "required_roles": ["source_owner"]},
     }
     path = tmp_path / "registry.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -56,7 +60,9 @@ def test_registry_rejects_host_and_path_drift(tmp_path: Path):
             "discovery_mode": "fixed_urls", "fixed_urls": ["https://other.example/guide"],
             "terms_review": {"status": "pending"}, "robots_policy": {"status": "pending"},
             "refresh_policy": {}, "content_policy": "pending_review",
+            "responsibility": {"owner": "data_owner", "reviewer_role": "reviewer", "status": "pending", "required_evidence": ["terms_license"]},
         }],
+        "responsibility_contract": {"version": "source-responsibility-v1", "gate_status": "pending_review", "required_roles": ["source_owner"]},
     }
     path = tmp_path / "registry.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -64,3 +70,27 @@ def test_registry_rejects_host_and_path_drift(tmp_path: Path):
     assert report["status"] == "FAIL"
     assert "sources[0]_domain_not_normalized" in report["errors"]
     assert "sources[0]_fixed_url_host_not_allowed" in report["errors"]
+
+
+def test_registry_rejects_missing_responsibility_record(tmp_path: Path):
+    payload = {
+        "registry_version": "source-registry-v1",
+        "real_service_acceptance": False,
+        "responsibility_contract": {
+            "version": "source-responsibility-v1",
+            "gate_status": "pending_review",
+            "required_roles": ["source_owner"],
+        },
+        "sources": [{
+            "source_id": "test-source", "status": "pending_review", "source_kind": "manufacturer",
+            "base_domains": ["example.com"], "allowed_paths": ["/docs"], "denied_paths": [],
+            "discovery_mode": "fixed_urls", "fixed_urls": ["https://example.com/docs"],
+            "terms_review": {"status": "pending"}, "robots_policy": {"status": "pending"},
+            "refresh_policy": {}, "content_policy": "pending_review",
+        }],
+    }
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    report = validate(path)
+    assert report["status"] == "FAIL"
+    assert "sources[0]_responsibility_missing" in report["errors"]

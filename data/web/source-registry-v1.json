@@ -2,6 +2,11 @@
   "registry_version": "source-registry-v1",
   "generated_at": "2026-10-04",
   "real_service_acceptance": false,
+  "responsibility_contract": {
+    "version": "source-responsibility-v1",
+    "gate_status": "pending_review",
+    "required_roles": ["source_owner", "terms_reviewer", "robots_reviewer", "retention_reviewer"]
+  },
   "storage_policy": "Versioned metadata only; raw web snapshots remain outside Git in restricted storage.",
   "sources": [
     {
@@ -47,6 +52,12 @@
       "content_policy": "pending_review",
       "authorization": "pending",
       "owner": "data_owner",
+      "responsibility": {
+        "owner": "data_owner",
+        "reviewer_role": "source_compliance_reviewer",
+        "status": "pending",
+        "required_evidence": ["terms_license", "robots_policy", "persistence_retention", "refresh_budget", "owner_approval"]
+      },
       "policy_version": "source-policy-v1"
     },
     {
@@ -92,6 +103,12 @@
       "content_policy": "pending_review",
       "authorization": "pending",
       "owner": "data_owner",
+      "responsibility": {
+        "owner": "data_owner",
+        "reviewer_role": "source_compliance_reviewer",
+        "status": "pending",
+        "required_evidence": ["terms_license", "robots_policy", "persistence_retention", "refresh_budget", "owner_approval"]
+      },
       "policy_version": "source-policy-v1"
     },
     {
@@ -137,6 +154,12 @@
       "content_policy": "pending_review",
       "authorization": "pending",
       "owner": "data_owner",
+      "responsibility": {
+        "owner": "data_owner",
+        "reviewer_role": "source_compliance_reviewer",
+        "status": "pending",
+        "required_evidence": ["terms_license", "robots_policy", "persistence_retention", "refresh_budget", "owner_approval"]
+      },
       "policy_version": "source-policy-v1"
     },
     {
@@ -182,6 +205,12 @@
       "content_policy": "no_persistence",
       "authorization": "provider_only",
       "owner": "engineering",
+      "responsibility": {
+        "owner": "engineering",
+        "reviewer_role": "source_compliance_reviewer",
+        "status": "pending",
+        "required_evidence": ["terms_license", "robots_policy", "persistence_retention", "refresh_budget", "owner_approval"]
+      },
       "policy_version": "source-policy-v1"
     }
   ]

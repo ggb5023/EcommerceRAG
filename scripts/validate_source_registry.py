@@ -17,6 +17,14 @@ DISCOVERY = {"fixed_urls", "sitemap", "rss", "bounded_links"}
 TERMS = {"pending", "approved", "rejected", "not_applicable"}
 ROBOTS = {"pending", "allowed", "denied", "unavailable"}
 POLICIES = {"pending_review", "raw_allowed", "summary_only", "no_persistence", "test_only"}
+RESPONSIBILITY_STATUS = {"pending", "approved", "rejected"}
+RESPONSIBILITY_EVIDENCE = {
+    "terms_license",
+    "robots_policy",
+    "persistence_retention",
+    "refresh_budget",
+    "owner_approval",
+}
 SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
@@ -39,6 +47,19 @@ def validate(path: Path) -> dict[str, Any]:
             errors.append("registry_version_invalid")
         if payload.get("real_service_acceptance") is not False:
             errors.append("real_service_acceptance_must_be_false")
+        contract = payload.get("responsibility_contract")
+        if not isinstance(contract, dict):
+            errors.append("responsibility_contract_missing")
+        else:
+            if contract.get("version") != "source-responsibility-v1":
+                errors.append("responsibility_contract_version_invalid")
+            if contract.get("gate_status") != "pending_review":
+                errors.append("responsibility_contract_gate_must_be_pending_review")
+            roles = contract.get("required_roles")
+            if not isinstance(roles, list) or not roles or any(
+                not isinstance(role, str) or not role.strip() for role in roles
+            ):
+                errors.append("responsibility_contract_roles_invalid")
         sources = payload.get("sources", [])
         if not isinstance(sources, list):
             errors.append("sources_must_be_array")
@@ -110,6 +131,24 @@ def validate(path: Path) -> dict[str, Any]:
             refresh = {}
         if item.get("content_policy") not in POLICIES:
             errors.append(f"{prefix}_content_policy_invalid")
+        responsibility = item.get("responsibility")
+        if not isinstance(responsibility, dict):
+            errors.append(f"{prefix}_responsibility_missing")
+            responsibility = {}
+        if not isinstance(responsibility.get("owner"), str) or not responsibility.get("owner", "").strip():
+            errors.append(f"{prefix}_responsibility_owner_invalid")
+        if not isinstance(responsibility.get("reviewer_role"), str) or not responsibility.get("reviewer_role", "").strip():
+            errors.append(f"{prefix}_responsibility_reviewer_role_invalid")
+        if responsibility.get("status") not in RESPONSIBILITY_STATUS:
+            errors.append(f"{prefix}_responsibility_status_invalid")
+        evidence = responsibility.get("required_evidence")
+        if (
+            not isinstance(evidence, list)
+            or not evidence
+            or any(value not in RESPONSIBILITY_EVIDENCE for value in evidence)
+            or len(set(evidence)) != len(evidence)
+        ):
+            errors.append(f"{prefix}_responsibility_evidence_invalid")
         if item.get("status") == "active":
             if terms.get("status") != "approved" or robots.get("status") != "allowed":
                 errors.append(f"{prefix}_active_without_review")
@@ -119,6 +158,8 @@ def validate(path: Path) -> dict[str, Any]:
                 errors.append(f"{prefix}_active_without_refresh_age")
             if item.get("content_policy") in {"pending_review", "no_persistence"}:
                 errors.append(f"{prefix}_active_content_policy_not_publishable")
+            if responsibility.get("status") != "approved":
+                errors.append(f"{prefix}_active_without_responsibility_approval")
     return {"status": "PASS" if not errors else "FAIL", "registry": str(path),
             "source_count": len(sources), "active_count": sum(item.get("status") == "active" for item in sources if isinstance(item, dict)),
             "errors": errors, "real_service_acceptance": False}
