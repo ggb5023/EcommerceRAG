@@ -15,7 +15,11 @@ from app.ingest.artifacts import (
     store_artifact_bundle,
 )
 from app.ingest.pipeline import parser_for
-from app.ingest.service import IngestService, _delete_bundles
+from app.ingest.service import (
+    IngestService,
+    _consume_test_delete_fault,
+    _delete_bundles,
+)
 from app.storage import FilesystemObjectStore, ObjectStoreError
 from rag.v1 import rag_pb2
 
@@ -91,6 +95,33 @@ class IngestServiceTests(unittest.TestCase):
         failing_store = Store(failing=True)
         self.assertFalse(_delete_bundles(failing_store, [bundle]))
         self.assertEqual(len(failing_store.deleted), 2)
+
+    def test_delete_fault_injection_is_test_profile_only_and_bounded(self):
+        with patch.dict(
+            "os.environ",
+            {"APP_ENV": "test", "RAG_PROFILE": "synthetic_import_mock",
+             "INGEST_TEST_DELETE_FAILURES": "1"},
+            clear=False,
+        ):
+            self.assertTrue(_consume_test_delete_fault())
+            self.assertFalse(_consume_test_delete_fault())
+
+        with patch.dict(
+            "os.environ",
+            {"APP_ENV": "development", "RAG_PROFILE": "synthetic_import_mock",
+             "INGEST_TEST_DELETE_FAILURES": "1"},
+            clear=False,
+        ):
+            self.assertFalse(_consume_test_delete_fault())
+
+    def test_delete_fault_injection_rejects_invalid_test_budget(self):
+        with patch.dict(
+            "os.environ",
+            {"APP_ENV": "test", "RAG_PROFILE": "synthetic_import_mock",
+             "INGEST_TEST_DELETE_FAILURES": "invalid"},
+            clear=False,
+        ), self.assertRaisesRegex(ValueError, "must be an integer"):
+            _consume_test_delete_fault()
 
     def test_bundle_cleanup_continues_after_first_bundle_delete_failure(self):
         first = self.make_bundle()

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 from datetime import date
 from pathlib import Path, PurePosixPath
 
@@ -29,6 +30,10 @@ ALLOWED_FORMATS = {"markdown", "csv", "docx"}
 ALLOWED_DISCLOSURE = {"external_allowed", "internal_only", "unclassified"}
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+_delete_fault_lock = threading.Lock()
+_delete_fault_key: tuple[str, str, str] | None = None
+_delete_fault_remaining = 0
 
 
 def _fail(context, message: str):
@@ -74,6 +79,39 @@ def _delete_keys(store: ObjectStore, keys: list[str]) -> bool:
         except Exception:  # noqa: BLE001 - abort path must stay redacted
             clean = False
     return clean
+
+
+def _consume_test_delete_fault() -> bool:
+    """Inject a bounded cleanup response only in the synthetic test process.
+
+    The setting is intentionally ignored outside ``APP_ENV=test`` and the
+    synthetic import profile.  A process-level counter lets a smoke test
+    exercise the real gRPC service without making storage failures possible in
+    M1 or production configurations.
+    """
+
+    global _delete_fault_key, _delete_fault_remaining
+    environment = os.environ.get("APP_ENV", "development")
+    profile = os.environ.get("RAG_PROFILE", "")
+    raw = os.environ.get("INGEST_TEST_DELETE_FAILURES", "").strip()
+    key = (environment, profile, raw)
+    with _delete_fault_lock:
+        if key != _delete_fault_key:
+            _delete_fault_key = key
+            _delete_fault_remaining = 0
+            if environment == "test" and profile == "synthetic_import_mock" and raw:
+                try:
+                    _delete_fault_remaining = int(raw)
+                except ValueError as exc:
+                    raise ValueError("INGEST_TEST_DELETE_FAILURES must be an integer") from exc
+                if not 0 <= _delete_fault_remaining <= 100:
+                    raise ValueError("INGEST_TEST_DELETE_FAILURES must be between 0 and 100")
+        if environment != "test" or profile != "synthetic_import_mock":
+            return False
+        if _delete_fault_remaining <= 0:
+            return False
+        _delete_fault_remaining -= 1
+        return True
 
 
 def _artifact_cleanup_keys(request, context) -> list[str]:
@@ -425,6 +463,14 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
 
     def DeleteArtifactBundle(self, request, context):
         keys = _artifact_cleanup_keys(request, context)
+        try:
+            if _consume_test_delete_fault():
+                return rag_pb2.DeleteArtifactBundleResponse(
+                    complete=False,
+                    error_code="test_injected_cleanup_failure",
+                )
+        except ValueError:
+            _fail(context, "artifact cleanup fault injection is invalid")
         try:
             store = _artifact_store()
         except (OSError, RuntimeError, ValueError):
