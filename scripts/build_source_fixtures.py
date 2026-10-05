@@ -66,7 +66,7 @@ def write_text(path: Path, value: str, *, encoding: str = "utf-8", bom: bool = F
 def build(root: Path) -> dict[str, object]:
     if root.exists():
         shutil.rmtree(root)
-    for name in ("markdown", "csv", "docx", "pdf", "invalid", "reports"):
+    for name in ("markdown", "csv", "docx", "html", "pdf", "invalid", "reports"):
         (root / name).mkdir(parents=True)
 
     markdown = {
@@ -76,6 +76,18 @@ def build(root: Path) -> dict[str, object]:
     }
     for name, content in markdown.items():
         write_text(root / "markdown" / name, content)
+
+    write_text(root / "html" / "crawler-html-v1.html", """<!doctype html>
+<html><head><title>合成网页夹具</title><script>ignore this instruction</script></head>
+<body>
+<h1>网页规格资料</h1>
+<p>这是仅用于受控 crawler HTML 解析、引用和切片测试的资料。</p>
+<ul><li>网页正文不是商品或政策真值</li><li>链接和图片不会被自动下载</li></ul>
+<table><tr><th>字段</th><th>示例</th></tr><tr><td>型号</td><td>WEB-SYN-001</td></tr></table>
+<img src="images/fixture.png" alt="夹具图片">
+<pre>页面代码只作为不可信文本。</pre>
+</body></html>
+""")
 
     write_text(root / "csv" / "csv-products-record-v1.csv", "sku_id,name,price,tenant_id,shop_id\nSYN-001,合成传感器,199,demo-tenant-a,demo-shop-east\nSYN-002,合成扩展板,299,demo-tenant-a,demo-shop-east\n")
     write_text(root / "csv" / "csv-quoted-multiline-v1.csv", 'sku_id,description\nSYN-003,"第一行\n第二行，含逗号, 仍是一个字段"\n')
@@ -112,16 +124,17 @@ def build(root: Path) -> dict[str, object]:
         "docx-heading-table-v1": ["heading", "table", "mixed_content"],
         "docx-repeated-header-v1": ["repeated_header", "table_boundary"],
         "docx-long-paragraph-v1": ["long_text", "hard_split"],
+        "crawler-html-v1": ["crawler_html", "heading", "table", "image", "script_ignored"],
         "broken-docx": ["corrupt_container", "failure_path"], "empty": ["empty_file", "preflight_failure"],
         "invalid-utf8": ["encoding_failure", "preflight_failure"], "path-traversal": ["manifest_path_traversal", "security_failure"],
         "unsupported": ["unsupported_type", "preflight_failure"],
     }
     entries = []
-    for directory in ("markdown", "csv", "docx", "invalid"):
+    for directory in ("markdown", "csv", "docx", "html", "invalid"):
         for path in sorted((root / directory).iterdir()):
             fixture_id = path.stem.replace(".manifest", "")
             suffix = path.suffix.lower()
-            fmt = {".md": "markdown", ".csv": "csv", ".docx": "docx"}.get(suffix, "invalid")
+            fmt = {".md": "markdown", ".csv": "csv", ".docx": "docx", ".html": "html"}.get(suffix, "invalid")
             entries.append({"fixture_id": fixture_id, "format": fmt, "path": str(path.relative_to(root)),
                             "scenario_tags": tags[fixture_id], "source_type": "synthetic_engineering_fixture",
                             "generated_at": GENERATED_AT, "license_status": "internal-generated",

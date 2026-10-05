@@ -13,8 +13,9 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date
+from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 
 def digest(value: str) -> str:
@@ -327,8 +328,204 @@ class DOCXParser:
         return elements
 
 
+class _HTMLDocumentParser(HTMLParser):
+    """Parse a bounded local HTML snapshot into the common element contract.
+
+    The parser deliberately accepts bytes that have already passed the crawler
+    source policy. It never resolves URLs, fetches images, or interprets page
+    instructions. Positions are source line/column pairs from ``HTMLParser``.
+    """
+
+    _HEADINGS: ClassVar[dict[str, int]] = {f"h{level}": level for level in range(1, 7)}
+    _BLOCKS: ClassVar[set[str]] = {"p", "li", "pre", "blockquote"}
+    _IGNORED: ClassVar[set[str]] = {"script", "style", "noscript", "template"}
+
+    def __init__(self, *, document_id: str, version_id: str, metadata: dict[str, Any]):
+        super().__init__(convert_charrefs=True)
+        self.document_id = document_id
+        self.version_id = version_id
+        self.metadata = metadata
+        self.elements: list[ParsedElement] = []
+        self.heading_stack: list[tuple[int, str]] = []
+        self.active: dict[str, Any] | None = None
+        self.table: dict[str, Any] | None = None
+        self.current_row: list[str] | None = None
+        self.current_cell: list[str] | None = None
+        self.ignored_depth = 0
+
+    def _position(self) -> dict[str, int]:
+        line, column = self.getpos()
+        return {"line": line, "column": column}
+
+    @staticmethod
+    def _text(parts: list[str], *, preserve: bool = False) -> str:
+        value = "".join(parts)
+        return value if preserve else " ".join(value.split())
+
+    def _emit_active(self) -> None:
+        active = self.active
+        self.active = None
+        if not active:
+            return
+        content = self._text(active["parts"], preserve=active["tag"] == "pre")
+        if not content:
+            return
+        start = active["start"]
+        end = self._position()
+        element_type = active["element_type"]
+        level = active.get("level")
+        heading = tuple(item[1] for item in self.heading_stack)
+        if level is not None:
+            heading = heading + (content,)
+        self.elements.append(_common(
+            self.document_id,
+            self.version_id,
+            self.metadata,
+            content if element_type == "heading" else self.metadata.get("title", self.document_id),
+            content,
+            {"line_start": start["line"], "line_end": end["line"],
+             "column_start": start["column"], "column_end": end["column"]},
+            heading=heading,
+            element_type=element_type,
+            text_level=level,
+        ))
+        if level is not None:
+            while self.heading_stack and self.heading_stack[-1][0] >= level:
+                self.heading_stack.pop()
+            self.heading_stack.append((level, content))
+
+    def _emit_table(self) -> None:
+        table = self.table
+        self.table = None
+        self.current_row = None
+        self.current_cell = None
+        if not table:
+            return
+        rows = [row for row in table["rows"] if any(cell.strip() for cell in row)]
+        if not rows:
+            return
+        start = table["start"]
+        end = self._position()
+        body = "\n".join(" | ".join(cell for cell in row) for row in rows)
+        self.elements.append(_common(
+            self.document_id,
+            self.version_id,
+            self.metadata,
+            self.metadata.get("title", self.document_id),
+            body,
+            {"line_start": start["line"], "line_end": end["line"],
+             "column_start": start["column"], "column_end": end["column"]},
+            heading=tuple(item[1] for item in self.heading_stack),
+            element_type="table",
+            table_body=rows,
+        ))
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in self._IGNORED:
+            self.ignored_depth += 1
+            return
+        if self.ignored_depth:
+            return
+        if tag == "br":
+            if self.active:
+                self.active["parts"].append("\n")
+            return
+        if tag == "img":
+            values = dict(attrs)
+            source = values.get("src") or ""
+            alt = (values.get("alt") or "").strip()
+            content = alt or source
+            if content:
+                position = self._position()
+                self.elements.append(_common(
+                    self.document_id,
+                    self.version_id,
+                    self.metadata,
+                    self.metadata.get("title", self.document_id),
+                    content,
+                    {"line_start": position["line"], "line_end": position["line"],
+                     "column_start": position["column"], "column_end": position["column"]},
+                    heading=tuple(item[1] for item in self.heading_stack),
+                    element_type="image",
+                    image_refs=(source,) if source else (),
+                    warning="image_reference_only",
+                ))
+            return
+        if tag == "table" and self.table is None and self.active is None:
+            self.table = {"start": self._position(), "rows": []}
+            return
+        if self.table is not None:
+            if tag == "tr":
+                self.current_row = []
+                return
+            if tag in {"td", "th"} and self.current_row is not None:
+                self.current_cell = []
+                return
+            return
+        if self.active is not None:
+            return
+        if tag in self._HEADINGS or tag in self._BLOCKS:
+            self.active = {
+                "tag": tag,
+                "parts": [],
+                "start": self._position(),
+                "element_type": "heading" if tag in self._HEADINGS else ("code" if tag == "pre" else "list" if tag == "li" else "text"),
+                "level": self._HEADINGS.get(tag),
+            }
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in self._IGNORED:
+            self.ignored_depth = max(0, self.ignored_depth - 1)
+            return
+        if self.ignored_depth:
+            return
+        if self.table is not None:
+            if tag in {"td", "th"} and self.current_cell is not None and self.current_row is not None:
+                self.current_row.append(self._text(self.current_cell))
+                self.current_cell = None
+                return
+            if tag == "tr" and self.current_row is not None:
+                self.table["rows"].append(self.current_row)
+                self.current_row = None
+                return
+            if tag == "table":
+                self._emit_table()
+                return
+            return
+        if self.active is not None and tag == self.active["tag"]:
+            self._emit_active()
+
+    def handle_data(self, data: str) -> None:
+        if self.ignored_depth:
+            return
+        if self.table is not None and self.current_cell is not None:
+            self.current_cell.append(data)
+        elif self.active is not None:
+            self.active["parts"].append(data)
+
+    def finish(self) -> list[ParsedElement]:
+        if self.table is not None:
+            self._emit_table()
+        if self.active is not None:
+            self._emit_active()
+        return self.elements
+
+
+class HTMLParserAdapter:
+    """Parse a local crawler HTML snapshot into shared parsed elements."""
+
+    def parse(self, path: Path, *, document_id: str, version_id: str, metadata: dict[str, Any]) -> list[ParsedElement]:
+        text = path.read_text(encoding="utf-8")
+        parser = _HTMLDocumentParser(document_id=document_id, version_id=version_id, metadata=metadata)
+        parser.feed(text)
+        parser.close()
+        return parser.finish()
+
 def parser_for(format_name: str) -> Parser:
-    return {"markdown": MarkdownParser(), "csv": CSVParser(), "docx": DOCXParser()}[format_name]
+    return {"markdown": MarkdownParser(), "csv": CSVParser(), "docx": DOCXParser(),
+            "html": HTMLParserAdapter(), "crawler_html": HTMLParserAdapter()}[format_name]
 
 
 def chunk_elements(elements: Iterable[ParsedElement], *, max_chars: int = 700) -> list[Chunk]:

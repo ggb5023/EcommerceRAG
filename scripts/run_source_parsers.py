@@ -29,7 +29,7 @@ def run(root: Path) -> dict:
             "chunks": [],
         }
         try:
-            if item["format"] not in {"markdown", "csv", "docx"}:
+            if item["format"] not in {"markdown", "csv", "docx", "html"}:
                 raise ValueError("unsupported_type")
             if item["format"] == "csv":
                 with path.open("r", encoding="utf-8-sig", newline="") as handle:

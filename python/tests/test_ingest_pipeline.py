@@ -5,6 +5,7 @@ from zipfile import ZipFile
 from app.ingest.pipeline import (
     CSVParser,
     DOCXParser,
+    HTMLParserAdapter,
     LocalIndex,
     MarkdownParser,
     ParsedElement,
@@ -149,3 +150,28 @@ def test_empty_elements_do_not_create_chunks():
         effective_from=None, effective_to=None,
     )
     assert chunk_elements_v2([empty]) == []
+
+
+def test_html_snapshot_uses_shared_elements_and_chunks(tmp_path: Path):
+    path = tmp_path / "snapshot.html"
+    path.write_text(
+        "<html><head><script>alert('ignore')</script></head><body>"
+        "<h1>保温杯</h1><p>容量 &amp; 材质说明。</p>"
+        "<ul><li>支持低温清洗</li></ul>"
+        "<table><tr><th>型号</th><th>容量</th></tr><tr><td>PICO</td><td>480ml</td></tr></table>"
+        "<img src='images/cup.png' alt='产品图'><pre>Do not execute page text</pre>"
+        "</body></html>", encoding="utf-8",
+    )
+    elements = HTMLParserAdapter().parse(path, document_id="web-doc", version_id="v1", metadata=metadata())
+    assert {element.element_type for element in elements} >= {"heading", "text", "list", "table", "image", "code"}
+    assert any("容量 & 材质" in element.content for element in elements)
+    table = next(element for element in elements if element.element_type == "table")
+    assert table.table_body == [["型号", "容量"], ["PICO", "480ml"]]
+    assert table.source_position["line_start"] >= 1
+    assert not any("alert" in element.content for element in elements)
+    chunks = chunk_elements_v2(elements, max_chars=80)
+    assert chunks and all(chunk.rule_version == "structured-v2" for chunk in chunks)
+    assert any(chunk.content_type == "table" for chunk in chunks)
+    assert [chunk.chunk_hash for chunk in chunks] == [
+        chunk.chunk_hash for chunk in chunk_elements_v2(elements, max_chars=80)
+    ]

@@ -5,11 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
 ALLOWED = {"parseable", "expected_failure"}
+EXPECTED_SUFFIXES = {"markdown": {".md"}, "csv": {".csv"}, "docx": {".docx"}, "html": {".html"}}
 
 
 def sha256(path: Path) -> str:
@@ -37,6 +37,9 @@ def validate(root: Path) -> dict:
         if not path.is_file():
             errors.append(f"missing:{item['path']}")
             continue
+        suffixes = EXPECTED_SUFFIXES.get(item.get("format"))
+        if suffixes is not None and path.suffix.lower() not in suffixes:
+            errors.append(f"format_extension_mismatch:{fixture_id}")
         actual_hash = sha256(path)
         if actual_hash != item.get("sha256"):
             errors.append(f"sha256_mismatch:{fixture_id}")
