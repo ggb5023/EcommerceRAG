@@ -152,6 +152,22 @@ def test_empty_elements_do_not_create_chunks():
     assert chunk_elements_v2([empty]) == []
 
 
+def test_structured_chunk_options_reject_unsafe_budgets():
+    element = ParsedElement(
+        document_id="doc", document_version_id="v1", title="title", heading=(),
+        content="一段内容。", source_position={}, metadata=metadata(),
+        disclosure_class="external_allowed", effective_from=None, effective_to=None,
+    )
+    import pytest
+
+    with pytest.raises(ValueError, match="max_chars"):
+        chunk_elements_v2([element], max_chars=0)
+    with pytest.raises(ValueError, match="overlap_chars"):
+        chunk_elements_v2([element], max_chars=5, overlap_chars=5)
+    with pytest.raises(ValueError, match="overlap_chars"):
+        chunk_elements_v2([element], max_chars=5, overlap_chars=-1)
+
+
 def test_html_snapshot_uses_shared_elements_and_chunks(tmp_path: Path):
     path = tmp_path / "snapshot.html"
     path.write_text(

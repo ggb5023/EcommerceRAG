@@ -184,6 +184,49 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "real service acceptance"):
                 MODULE.m2_gate_status(claimed_acceptance)
 
+            missing_requirement = root / "missing-requirement.json"
+            missing = dict(requirements)
+            missing.pop("identity_roles_revocation")
+            missing_requirement.write_text(json.dumps({**base, "requirements": missing}))
+            with self.assertRaisesRegex(TypeError, "missing requirement"):
+                MODULE.m2_gate_status(missing_requirement)
+
+            owner_drift = root / "owner-drift.json"
+            owner_rows = {
+                **requirements,
+                "identity_roles_revocation": {
+                    **requirements["identity_roles_revocation"],
+                    "owner": "unexpected_owner",
+                },
+            }
+            owner_drift.write_text(json.dumps({**base, "requirements": owner_rows}))
+            with self.assertRaisesRegex(ValueError, "owner/evidence mismatch"):
+                MODULE.m2_gate_status(owner_drift)
+
+            evidence_drift = root / "evidence-drift.json"
+            evidence_rows = {
+                **requirements,
+                "identity_roles_revocation": {
+                    **requirements["identity_roles_revocation"],
+                    "evidence": "unreviewed evidence",
+                },
+            }
+            evidence_drift.write_text(json.dumps({**base, "requirements": evidence_rows}))
+            with self.assertRaisesRegex(ValueError, "owner/evidence mismatch"):
+                MODULE.m2_gate_status(evidence_drift)
+
+            ready_type = root / "ready-type.json"
+            ready_rows = {
+                **requirements,
+                "identity_roles_revocation": {
+                    **requirements["identity_roles_revocation"],
+                    "ready": "false",
+                },
+            }
+            ready_type.write_text(json.dumps({**base, "requirements": ready_rows}))
+            with self.assertRaisesRegex(TypeError, "ready must be boolean"):
+                MODULE.m2_gate_status(ready_type)
+
     def test_report_hash_ignores_timestamp(self):
         first = {"run": {"started_at": "2026-01-01T00:00:00Z"}, "results": {"count": 1}}
         second = {"run": {"started_at": "2027-01-01T00:00:00Z"}, "results": {"count": 1}}
