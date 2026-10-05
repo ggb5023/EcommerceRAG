@@ -20,11 +20,17 @@ PYTHON = ROOT / "python"
 if str(PYTHON) not in sys.path:
     sys.path.insert(0, str(PYTHON))
 
-from app.ingest.artifacts import ArtifactInput, read_manifest, store_artifact_bundle
+from app.ingest.artifacts import (
+    ArtifactBundleError,
+    ArtifactInput,
+    read_manifest,
+    store_artifact_bundle,
+)
 from app.storage import (
     OSS_CONFIG_PATH,
     AlibabaOSSObjectStore,
     FilesystemObjectStore,
+    ObjectStore,
     ObjectStoreError,
     load_oss_config,
 )
@@ -49,6 +55,74 @@ def _inputs(token: str) -> tuple[ArtifactInput, ...]:
             "application/json",
         ),
     )
+
+
+class _FailingStore:
+    """Fail one write while preserving the ObjectStore surface for rollback tests."""
+
+    def __init__(self, delegate: ObjectStore, fail_on_put: int):
+        self.delegate = delegate
+        self.fail_on_put = fail_on_put
+        self.put_count = 0
+
+    def put_bytes(self, key, data, *, content_type, expected_sha256):
+        self.put_count += 1
+        if self.put_count == self.fail_on_put:
+            raise ObjectStoreError("simulated storage failure")
+        return self.delegate.put_bytes(
+            key,
+            data,
+            content_type=content_type,
+            expected_sha256=expected_sha256,
+        )
+
+    def get_bytes(self, key, *, expected_sha256=None):
+        return self.delegate.get_bytes(key, expected_sha256=expected_sha256)
+
+    def delete(self, key):
+        return self.delegate.delete(key)
+
+    def head(self, key):
+        return self.delegate.head(key)
+
+    def presign_get(self, key, *, expires_s=300):
+        return self.delegate.presign_get(key, expires_s=expires_s)
+
+
+def _negative_checks() -> dict[str, bool]:
+    """Exercise rollback and manifest tamper rejection without network access."""
+
+    checks = {"rollback": False, "tamper_rejected": False}
+    with tempfile.TemporaryDirectory(prefix="ecr-artifact-negative-") as directory:
+        root = Path(directory)
+        filesystem = FilesystemObjectStore(root)
+        failing = _FailingStore(filesystem, fail_on_put=2)
+        try:
+            store_artifact_bundle(
+                failing,
+                tenant_id="ecr-negative-tenant",
+                shop_id="ecr-negative-shop",
+                document_version_id="rollback-v1",
+                artifacts=(ArtifactInput("raw", b"raw"), ArtifactInput("parsed", b"parsed")),
+            )
+        except ArtifactBundleError:
+            checks["rollback"] = not any(path.is_file() for path in root.rglob("*"))
+
+        bundle = store_artifact_bundle(
+            filesystem,
+            tenant_id="ecr-negative-tenant",
+            shop_id="ecr-negative-shop",
+            document_version_id="tamper-v1",
+            artifacts=(ArtifactInput("report", b"report", "application/json"),),
+        )
+        Path(root / bundle.manifest.object_key).write_bytes(b"tampered")
+        try:
+            read_manifest(filesystem, bundle)
+        except ArtifactBundleError:
+            checks["tamper_rejected"] = True
+        for record in bundle.all_records:
+            filesystem.delete(record.object_key)
+    return checks
 
 
 def _run(store, *, backend: str, cleanup: bool = True, output: Path | None = None) -> int:
@@ -104,12 +178,14 @@ def _run(store, *, backend: str, cleanup: bool = True, output: Path | None = Non
             }
             for record in bundle.records
         ]
+    negative_checks = _negative_checks() if backend == "filesystem" else None
     report = {
         "status": "PASS" if all(checks.values()) and not cleanup_error else "FAIL",
         "backend": backend,
         "artifact_count": len(records),
         "artifacts": records,
         "checks": checks,
+        "negative_checks": negative_checks,
         "cleanup_error": cleanup_error,
         "raw_content_saved": False,
         "real_service_acceptance": False,
@@ -121,6 +197,13 @@ def _run(store, *, backend: str, cleanup: bool = True, output: Path | None = Non
             encoding="utf-8",
         )
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    if negative_checks is not None and not all(negative_checks.values()):
+        report["status"] = "FAIL"
+        if output is not None:
+            output.write_text(
+                json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
     return 0 if report["status"] == "PASS" else 4
 
 
