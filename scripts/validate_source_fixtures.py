@@ -6,10 +6,12 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
 ALLOWED = {"parseable", "expected_failure"}
 EXPECTED_SUFFIXES = {"markdown": {".md"}, "csv": {".csv"}, "docx": {".docx"}, "html": {".html"}}
+FORMATS = set(EXPECTED_SUFFIXES) | {"invalid"}
 
 
 def sha256(path: Path) -> str:
@@ -20,12 +22,46 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def safe_fixture_path(root: Path, raw_path: object) -> Path | None:
+    """Resolve a manifest path only when it stays inside the fixture root."""
+    if not isinstance(raw_path, str) or not raw_path or "\\" in raw_path or "\x00" in raw_path:
+        return None
+    relative = PurePosixPath(raw_path)
+    if (relative.is_absolute() or relative.as_posix() != raw_path
+            or any(part in {"", ".", ".."} for part in relative.parts)):
+        return None
+    root = root.resolve()
+    candidate = root.joinpath(*relative.parts)
+    if candidate.is_symlink():
+        return None
+    try:
+        candidate.resolve().relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def validate(root: Path) -> dict:
     manifest_path = root / "manifest.json"
-    data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    errors = []
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {"manifest_version": None, "fixture_count": 0,
+                "errors": [f"manifest_invalid:{type(exc).__name__}"], "status": "FAIL"}
+    if not isinstance(data, dict):
+        return {"manifest_version": None, "fixture_count": 0,
+                "errors": ["manifest_not_object"], "status": "FAIL"}
+    fixtures = data.get("fixtures")
+    if not isinstance(fixtures, list):
+        return {"manifest_version": data.get("manifest_version"), "fixture_count": 0,
+                "errors": ["fixtures_must_be_array"], "status": "FAIL"}
+    errors: list[str] = []
     seen = set()
-    for item in data.get("fixtures", []):
+    seen_paths: set[str] = set()
+    for index, item in enumerate(fixtures):
+        if not isinstance(item, dict):
+            errors.append(f"fixture_not_object:{index}")
+            continue
         fixture_id = item.get("fixture_id")
         if not fixture_id or fixture_id in seen:
             errors.append(f"duplicate_or_missing_fixture_id:{fixture_id}")
@@ -33,11 +69,22 @@ def validate(root: Path) -> dict:
         status = item.get("expected_parse_status")
         if status not in ALLOWED:
             errors.append(f"invalid_expected_parse_status:{fixture_id}")
-        path = root / item["path"]
-        if not path.is_file():
-            errors.append(f"missing:{item['path']}")
+        format_name = item.get("format")
+        if format_name not in FORMATS:
+            errors.append(f"invalid_format:{fixture_id}")
+        raw_path = item.get("path")
+        path = safe_fixture_path(root, raw_path)
+        if path is None:
+            errors.append(f"unsafe_path:{fixture_id}")
             continue
-        suffixes = EXPECTED_SUFFIXES.get(item.get("format"))
+        normalized_path = path.relative_to(root.resolve()).as_posix()
+        if normalized_path in seen_paths:
+            errors.append(f"duplicate_path:{normalized_path}")
+        seen_paths.add(normalized_path)
+        if not path.is_file():
+            errors.append(f"missing:{raw_path}")
+            continue
+        suffixes = EXPECTED_SUFFIXES.get(format_name)
         if suffixes is not None and path.suffix.lower() not in suffixes:
             errors.append(f"format_extension_mismatch:{fixture_id}")
         actual_hash = sha256(path)

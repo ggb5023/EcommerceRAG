@@ -9,8 +9,10 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "python"))
 from app.ingest.pipeline import chunk_elements_v2, parser_for
+from scripts.validate_source_fixtures import safe_fixture_path
 
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
 
@@ -18,20 +20,26 @@ ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
 def run(root: Path) -> dict:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     reports = []
-    for item in manifest["fixtures"]:
-        fixture_id = item["fixture_id"]
-        path = root / item["path"]
+    for index, item in enumerate(manifest.get("fixtures", [])):
+        if not isinstance(item, dict):
+            raise ValueError(f"fixture_not_object:{index}")
+        fixture_id = item.get("fixture_id", f"<fixture-{index}>")
+        format_name = item.get("format")
+        expected_status = item.get("expected_parse_status")
+        path = safe_fixture_path(root, item.get("path"))
         result = {
-            "fixture_id": fixture_id, "format": item["format"],
-            "expected_parse_status": item["expected_parse_status"],
+            "fixture_id": fixture_id, "format": format_name,
+            "expected_parse_status": expected_status,
             "parse_status": "FAILED", "element_count": 0, "chunk_count": 0,
             "warning_count": 0, "error_code": None, "source_position_coverage": 0,
             "chunks": [],
         }
         try:
-            if item["format"] not in {"markdown", "csv", "docx", "html"}:
+            if path is None:
+                raise ValueError("unsafe_fixture_path")
+            if format_name not in {"markdown", "csv", "docx", "html"}:
                 raise ValueError("unsupported_type")
-            if item["format"] == "csv":
+            if format_name == "csv":
                 with path.open("r", encoding="utf-8-sig", newline="") as handle:
                     rows = list(csv.reader(handle))
                 if rows:
@@ -43,7 +51,7 @@ def run(root: Path) -> dict:
                 "shop_id": "demo-shop-east", "disclosure_class": "internal_only",
                 "effective_from": "2026-10-03", "effective_to": None,
             }
-            elements = parser_for(item["format"]).parse(
+            elements = parser_for(format_name).parse(
                 path, document_id=fixture_id, version_id="fixture-v1", metadata=metadata
             )
             if not elements:
@@ -71,7 +79,7 @@ def run(root: Path) -> dict:
             result["error_code"] = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
         except Exception as exc:  # noqa: BLE001 - preserve parser failure code in report
             result["error_code"] = type(exc).__name__
-        expected_ok = item["expected_parse_status"] == "parseable"
+        expected_ok = expected_status == "parseable"
         actual_ok = result["parse_status"] == "PASS"
         result["expectation_status"] = "PASS" if expected_ok == actual_ok else "MISMATCH"
         reports.append(result)
