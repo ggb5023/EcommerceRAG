@@ -11,6 +11,7 @@ dependencies = [
 ]
 [dependency-groups]
 dev = ["grpcio-tools>=1.70,<2", "pytest>=8,<9", "ruff>=0.11,<1"]
+cloud = ["oss2==2.19.1"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
