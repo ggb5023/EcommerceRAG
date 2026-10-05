@@ -157,6 +157,163 @@ func validEffectiveDateRange(from, to string) bool {
 	return from == "" || to == "" || toDate.After(fromDate)
 }
 
+type artifactBinding struct {
+	DocumentVersionID string
+	ManifestObjectKey string
+	ManifestSHA256    string
+	ArtifactSetSHA256 string
+	RawObjectKey      string
+	ParsedObjectKey   string
+	ArtifactTypes     []string
+}
+
+type artifactRecordCanonical struct {
+	ArtifactType string `json:"artifact_type"`
+	ContentType  string `json:"content_type"`
+	ObjectKey    string `json:"object_key"`
+	SHA256       string `json:"sha256"`
+	SizeBytes    int64  `json:"size_bytes"`
+}
+
+type artifactSetCanonical struct {
+	Artifacts []artifactRecordCanonical `json:"artifacts"`
+}
+
+func validArtifactObjectKey(key, expectedHash string) bool {
+	if len(key) == 0 || len(key) > 768 {
+		return false
+	}
+	parts := strings.Split(key, "/")
+	if len(parts) != 5 || !validSHA256Hex(expectedHash) || parts[4] != expectedHash {
+		return false
+	}
+	for index, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsRune(part, '\\') || strings.ContainsRune(part, 0) || len(part) > 128 {
+			return false
+		}
+		for characterIndex, character := range part {
+			if characterIndex == 0 && !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9')) {
+				return false
+			}
+			if index == 3 && characterIndex == 0 && !(character >= 'a' && character <= 'z') {
+				return false
+			}
+			if index == 3 && character >= 'A' && character <= 'Z' {
+				return false
+			}
+			if !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '.' || character == '_' || character == '-') {
+				return false
+			}
+		}
+	}
+	if len(parts[3]) > 64 {
+		return false
+	}
+	return true
+}
+
+func validateArtifactBundle(document *ragv1.ParsedDocument) (*artifactBinding, error) {
+	if document == nil || document.ArtifactBundle == nil {
+		return nil, nil
+	}
+	reference := document.ArtifactBundle
+	if reference.RealServiceAcceptance {
+		return nil, errors.New("artifact bundle cannot claim real service acceptance")
+	}
+	if !strings.HasPrefix(reference.DocumentVersionId, "v-") || len(reference.DocumentVersionId) != 22 {
+		return nil, errors.New("artifact document version is invalid")
+	}
+	for _, character := range reference.DocumentVersionId[2:] {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return nil, errors.New("artifact document version is invalid")
+		}
+	}
+	if !validSHA256Hex(reference.ManifestSha256) || !validSHA256Hex(reference.ArtifactSetSha256) ||
+		!validArtifactObjectKey(reference.ManifestObjectKey, reference.ManifestSha256) {
+		return nil, errors.New("artifact manifest identity is invalid")
+	}
+	records := make([]artifactRecordCanonical, 0, len(reference.Artifacts))
+	seen := make(map[string]struct{}, len(reference.Artifacts))
+	for _, record := range reference.Artifacts {
+		if record == nil || record.ArtifactType == "artifact-manifest" || record.ArtifactType == "" ||
+			record.ContentType == "" || record.SizeBytes <= 0 ||
+			!validArtifactObjectKey(record.ObjectKey, record.Sha256) {
+			return nil, errors.New("artifact record identity is invalid")
+		}
+		if _, exists := seen[record.ArtifactType]; exists {
+			return nil, errors.New("artifact record type is duplicated")
+		}
+		seen[record.ArtifactType] = struct{}{}
+		records = append(records, artifactRecordCanonical{
+			ArtifactType: record.ArtifactType,
+			ContentType:  record.ContentType,
+			ObjectKey:    record.ObjectKey,
+			SHA256:       record.Sha256,
+			SizeBytes:    record.SizeBytes,
+		})
+	}
+	sort.Slice(records, func(left, right int) bool {
+		return records[left].ArtifactType < records[right].ArtifactType
+	})
+	required := []string{"chunks", "parsed", "parse-report", "raw"}
+	for _, artifactType := range required {
+		if _, exists := seen[artifactType]; !exists {
+			return nil, fmt.Errorf("artifact record %s is missing", artifactType)
+		}
+	}
+	canonical, err := json.Marshal(artifactSetCanonical{Artifacts: records})
+	if err != nil {
+		return nil, errors.New("artifact record set cannot be serialized")
+	}
+	digest := sha256.Sum256(canonical)
+	if hex.EncodeToString(digest[:]) != reference.ArtifactSetSha256 {
+		return nil, errors.New("artifact record set hash is invalid")
+	}
+	artifactKeys := make(map[string]string, len(reference.Artifacts))
+	artifactTypes := make([]string, 0, len(records))
+	for _, record := range records {
+		artifactTypes = append(artifactTypes, record.ArtifactType)
+	}
+	for _, record := range reference.Artifacts {
+		artifactKeys[record.ArtifactType] = record.ObjectKey
+	}
+	return &artifactBinding{
+		DocumentVersionID: reference.DocumentVersionId,
+		ManifestObjectKey: reference.ManifestObjectKey,
+		ManifestSHA256:    reference.ManifestSha256,
+		ArtifactSetSHA256: reference.ArtifactSetSha256,
+		RawObjectKey:      artifactKeys["raw"],
+		ParsedObjectKey:   artifactKeys["parsed"],
+		ArtifactTypes:     artifactTypes,
+	}, nil
+}
+
+func artifactQualityJSON(document *ragv1.ParsedDocument, binding *artifactBinding) (string, error) {
+	quality := map[string]any{
+		"chunk_count":       len(document.Chunks),
+		"empty_chunk_count": 0,
+		"parse_status":      "passed",
+		"embedding_status":  "not_run",
+		"index_mode":        "deterministic_keyword",
+		"quality_gate":      "passed",
+	}
+	if binding != nil {
+		quality["artifact_bundle"] = map[string]any{
+			"document_version_id":     binding.DocumentVersionID,
+			"manifest_object_key":     binding.ManifestObjectKey,
+			"manifest_sha256":         binding.ManifestSHA256,
+			"artifact_set_sha256":     binding.ArtifactSetSHA256,
+			"artifact_types":          binding.ArtifactTypes,
+			"real_service_acceptance": false,
+		}
+	}
+	data, err := json.Marshal(quality)
+	if err != nil {
+		return "", errors.New("artifact quality metadata cannot be serialized")
+	}
+	return string(data), nil
+}
+
 func validateParsedPackage(claim *ingestClaim, parsed *ragv1.ParsePackageResponse) error {
 	qualityError := func(code, message string) error {
 		return &ingestParseQualityError{code: code, message: message}
@@ -222,6 +379,9 @@ func validateParsedPackage(claim *ingestClaim, parsed *ragv1.ParsePackageRespons
 		file, exists := filesByPath[document.Path]
 		if !exists || file.DocumentID != document.DocumentId || file.SourceHash != document.SourceHash {
 			return qualityError("parse_document_binding_invalid", "parser document does not match the queued file")
+		}
+		if _, err := validateArtifactBundle(document); err != nil {
+			return qualityError("parse_artifact_binding_invalid", err.Error())
 		}
 		if document.Title == "" || (document.Format != "markdown" && document.Format != "csv" && document.Format != "docx") {
 			return qualityError("parse_document_metadata_invalid", "parser returned invalid document metadata")
@@ -877,6 +1037,14 @@ func (g *gateway) completeParsedIngestClaim(ctx context.Context, claim *ingestCl
 		if !exists || file.DocumentID != document.DocumentId || file.SourceHash != document.SourceHash {
 			return &adminConflictError{message: "parsed document no longer matches its queued item"}
 		}
+		binding, bindingErr := validateArtifactBundle(document)
+		if bindingErr != nil {
+			return &adminConflictError{message: "parsed artifact bundle changed before persistence"}
+		}
+		quality, qualityErr := artifactQualityJSON(document, binding)
+		if qualityErr != nil {
+			return qualityErr
+		}
 		var itemVersionID, itemID int64
 		err = tx.QueryRow(ctx, `SELECT i.id,i.document_version_id FROM ingest_job_item i
 			WHERE i.tenant_id=$1 AND i.job_id=$2 AND i.id=$3 AND i.status='running'
@@ -906,12 +1074,17 @@ func (g *gateway) completeParsedIngestClaim(ctx context.Context, claim *ingestCl
 		if err != nil {
 			return err
 		}
-		quality := fmt.Sprintf(`{"chunk_count":%d,"empty_chunk_count":0,"parse_status":"passed","embedding_status":"not_run","index_mode":"deterministic_keyword","quality_gate":"passed"}`, len(document.Chunks))
+		sourceObjectKey := "db://source_file/" + strconv.FormatInt(fileID, 10)
+		parsedObjectKey := sourceObjectKey
+		if binding != nil {
+			sourceObjectKey = binding.RawObjectKey
+			parsedObjectKey = binding.ParsedObjectKey
+		}
 		result, err := tx.Exec(ctx, `UPDATE document_version SET status='ready',chunk_count=$3,source_manifest_id=$4,
-			parsed_object_key=$5,quality_json=$6::jsonb
-			WHERE tenant_id=$1 AND id=$2 AND status='building' AND source_hash=$7`,
+			object_key=$5,parsed_object_key=$6,quality_json=$7::jsonb
+			WHERE tenant_id=$1 AND id=$2 AND status='building' AND source_hash=$8`,
 			claim.TenantID, itemVersionID, len(document.Chunks), manifestID,
-			"db://source_file/"+strconv.FormatInt(fileID, 10), quality, document.SourceHash)
+			sourceObjectKey, parsedObjectKey, quality, document.SourceHash)
 		if err != nil {
 			return err
 		}
@@ -930,8 +1103,7 @@ func (g *gateway) completeParsedIngestClaim(ctx context.Context, claim *ingestCl
 				chunk.ChunkIndex, chunk.SectionSeq, chunk.SectionChunkIndex, chunk.CharStart, chunk.CharEnd,
 				chunk.HeadingPath, chunk.Content, chunk.TokenCount, chunk.ContentType, chunk.SplitReason,
 				nullableDate(stringPointer(document.EffectiveFrom)), nullableDate(stringPointer(document.EffectiveTo)),
-				chunk.MetadataJson, "db://source_file/"+strconv.FormatInt(fileID, 10),
-				"db://source_file/"+strconv.FormatInt(fileID, 10), chunk.ChunkHash)
+				chunk.MetadataJson, sourceObjectKey, parsedObjectKey, chunk.ChunkHash)
 			if err != nil {
 				return err
 			}

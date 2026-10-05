@@ -2196,17 +2196,18 @@ func (x *ParsedChunk) GetMetadataJson() string {
 }
 
 type ParsedDocument struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	DocumentId      string                 `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
-	Title           string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
-	Format          string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
-	Path            string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
-	SourceHash      string                 `protobuf:"bytes,5,opt,name=source_hash,json=sourceHash,proto3" json:"source_hash,omitempty"`
-	DisclosureClass string                 `protobuf:"bytes,6,opt,name=disclosure_class,json=disclosureClass,proto3" json:"disclosure_class,omitempty"`
-	ExternalAllowed bool                   `protobuf:"varint,7,opt,name=external_allowed,json=externalAllowed,proto3" json:"external_allowed,omitempty"`
-	EffectiveFrom   string                 `protobuf:"bytes,8,opt,name=effective_from,json=effectiveFrom,proto3" json:"effective_from,omitempty"`
-	EffectiveTo     string                 `protobuf:"bytes,9,opt,name=effective_to,json=effectiveTo,proto3" json:"effective_to,omitempty"`
-	Chunks          []*ParsedChunk         `protobuf:"bytes,10,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	state           protoimpl.MessageState   `protogen:"open.v1"`
+	DocumentId      string                   `protobuf:"bytes,1,opt,name=document_id,json=documentId,proto3" json:"document_id,omitempty"`
+	Title           string                   `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	Format          string                   `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`
+	Path            string                   `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	SourceHash      string                   `protobuf:"bytes,5,opt,name=source_hash,json=sourceHash,proto3" json:"source_hash,omitempty"`
+	DisclosureClass string                   `protobuf:"bytes,6,opt,name=disclosure_class,json=disclosureClass,proto3" json:"disclosure_class,omitempty"`
+	ExternalAllowed bool                     `protobuf:"varint,7,opt,name=external_allowed,json=externalAllowed,proto3" json:"external_allowed,omitempty"`
+	EffectiveFrom   string                   `protobuf:"bytes,8,opt,name=effective_from,json=effectiveFrom,proto3" json:"effective_from,omitempty"`
+	EffectiveTo     string                   `protobuf:"bytes,9,opt,name=effective_to,json=effectiveTo,proto3" json:"effective_to,omitempty"`
+	Chunks          []*ParsedChunk           `protobuf:"bytes,10,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	ArtifactBundle  *ArtifactBundleReference `protobuf:"bytes,11,opt,name=artifact_bundle,json=artifactBundle,proto3" json:"artifact_bundle,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2311,6 +2312,173 @@ func (x *ParsedDocument) GetChunks() []*ParsedChunk {
 	return nil
 }
 
+func (x *ParsedDocument) GetArtifactBundle() *ArtifactBundleReference {
+	if x != nil {
+		return x.ArtifactBundle
+	}
+	return nil
+}
+
+type ArtifactRecord struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ArtifactType  string                 `protobuf:"bytes,1,opt,name=artifact_type,json=artifactType,proto3" json:"artifact_type,omitempty"`
+	ObjectKey     string                 `protobuf:"bytes,2,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"`
+	Sha256        string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	ContentType   string                 `protobuf:"bytes,5,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArtifactRecord) Reset() {
+	*x = ArtifactRecord{}
+	mi := &file_rag_v1_rag_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArtifactRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArtifactRecord) ProtoMessage() {}
+
+func (x *ArtifactRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_rag_v1_rag_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArtifactRecord.ProtoReflect.Descriptor instead.
+func (*ArtifactRecord) Descriptor() ([]byte, []int) {
+	return file_rag_v1_rag_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ArtifactRecord) GetArtifactType() string {
+	if x != nil {
+		return x.ArtifactType
+	}
+	return ""
+}
+
+func (x *ArtifactRecord) GetObjectKey() string {
+	if x != nil {
+		return x.ObjectKey
+	}
+	return ""
+}
+
+func (x *ArtifactRecord) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *ArtifactRecord) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *ArtifactRecord) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+type ArtifactBundleReference struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	DocumentVersionId     string                 `protobuf:"bytes,1,opt,name=document_version_id,json=documentVersionId,proto3" json:"document_version_id,omitempty"`
+	ManifestObjectKey     string                 `protobuf:"bytes,2,opt,name=manifest_object_key,json=manifestObjectKey,proto3" json:"manifest_object_key,omitempty"`
+	ManifestSha256        string                 `protobuf:"bytes,3,opt,name=manifest_sha256,json=manifestSha256,proto3" json:"manifest_sha256,omitempty"`
+	ArtifactSetSha256     string                 `protobuf:"bytes,4,opt,name=artifact_set_sha256,json=artifactSetSha256,proto3" json:"artifact_set_sha256,omitempty"`
+	Artifacts             []*ArtifactRecord      `protobuf:"bytes,5,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
+	RealServiceAcceptance bool                   `protobuf:"varint,6,opt,name=real_service_acceptance,json=realServiceAcceptance,proto3" json:"real_service_acceptance,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *ArtifactBundleReference) Reset() {
+	*x = ArtifactBundleReference{}
+	mi := &file_rag_v1_rag_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArtifactBundleReference) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArtifactBundleReference) ProtoMessage() {}
+
+func (x *ArtifactBundleReference) ProtoReflect() protoreflect.Message {
+	mi := &file_rag_v1_rag_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArtifactBundleReference.ProtoReflect.Descriptor instead.
+func (*ArtifactBundleReference) Descriptor() ([]byte, []int) {
+	return file_rag_v1_rag_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ArtifactBundleReference) GetDocumentVersionId() string {
+	if x != nil {
+		return x.DocumentVersionId
+	}
+	return ""
+}
+
+func (x *ArtifactBundleReference) GetManifestObjectKey() string {
+	if x != nil {
+		return x.ManifestObjectKey
+	}
+	return ""
+}
+
+func (x *ArtifactBundleReference) GetManifestSha256() string {
+	if x != nil {
+		return x.ManifestSha256
+	}
+	return ""
+}
+
+func (x *ArtifactBundleReference) GetArtifactSetSha256() string {
+	if x != nil {
+		return x.ArtifactSetSha256
+	}
+	return ""
+}
+
+func (x *ArtifactBundleReference) GetArtifacts() []*ArtifactRecord {
+	if x != nil {
+		return x.Artifacts
+	}
+	return nil
+}
+
+func (x *ArtifactBundleReference) GetRealServiceAcceptance() bool {
+	if x != nil {
+		return x.RealServiceAcceptance
+	}
+	return false
+}
+
 type ParsePackageResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	SourceId        string                 `protobuf:"bytes,1,opt,name=source_id,json=sourceId,proto3" json:"source_id,omitempty"`
@@ -2326,7 +2494,7 @@ type ParsePackageResponse struct {
 
 func (x *ParsePackageResponse) Reset() {
 	*x = ParsePackageResponse{}
-	mi := &file_rag_v1_rag_proto_msgTypes[26]
+	mi := &file_rag_v1_rag_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2338,7 +2506,7 @@ func (x *ParsePackageResponse) String() string {
 func (*ParsePackageResponse) ProtoMessage() {}
 
 func (x *ParsePackageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rag_v1_rag_proto_msgTypes[26]
+	mi := &file_rag_v1_rag_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2351,7 +2519,7 @@ func (x *ParsePackageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ParsePackageResponse.ProtoReflect.Descriptor instead.
 func (*ParsePackageResponse) Descriptor() ([]byte, []int) {
-	return file_rag_v1_rag_proto_rawDescGZIP(), []int{26}
+	return file_rag_v1_rag_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ParsePackageResponse) GetSourceId() string {
@@ -2614,7 +2782,7 @@ const file_rag_v1_rag_proto_rawDesc = "" +
 	"\fsplit_reason\x18\v \x01(\tR\vsplitReason\x12\x1d\n" +
 	"\n" +
 	"chunk_hash\x18\f \x01(\tR\tchunkHash\x12#\n" +
-	"\rmetadata_json\x18\r \x01(\tR\fmetadataJson\"\xe1\x02\n" +
+	"\rmetadata_json\x18\r \x01(\tR\fmetadataJson\"\xab\x03\n" +
 	"\x0eParsedDocument\x12\x1f\n" +
 	"\vdocument_id\x18\x01 \x01(\tR\n" +
 	"documentId\x12\x14\n" +
@@ -2628,7 +2796,23 @@ const file_rag_v1_rag_proto_rawDesc = "" +
 	"\x0eeffective_from\x18\b \x01(\tR\reffectiveFrom\x12!\n" +
 	"\feffective_to\x18\t \x01(\tR\veffectiveTo\x12+\n" +
 	"\x06chunks\x18\n" +
-	" \x03(\v2\x13.rag.v1.ParsedChunkR\x06chunks\"\xaa\x02\n" +
+	" \x03(\v2\x13.rag.v1.ParsedChunkR\x06chunks\x12H\n" +
+	"\x0fartifact_bundle\x18\v \x01(\v2\x1f.rag.v1.ArtifactBundleReferenceR\x0eartifactBundle\"\xae\x01\n" +
+	"\x0eArtifactRecord\x12#\n" +
+	"\rartifact_type\x18\x01 \x01(\tR\fartifactType\x12\x1d\n" +
+	"\n" +
+	"object_key\x18\x02 \x01(\tR\tobjectKey\x12\x16\n" +
+	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\x12!\n" +
+	"\fcontent_type\x18\x05 \x01(\tR\vcontentType\"\xc0\x02\n" +
+	"\x17ArtifactBundleReference\x12.\n" +
+	"\x13document_version_id\x18\x01 \x01(\tR\x11documentVersionId\x12.\n" +
+	"\x13manifest_object_key\x18\x02 \x01(\tR\x11manifestObjectKey\x12'\n" +
+	"\x0fmanifest_sha256\x18\x03 \x01(\tR\x0emanifestSha256\x12.\n" +
+	"\x13artifact_set_sha256\x18\x04 \x01(\tR\x11artifactSetSha256\x124\n" +
+	"\tartifacts\x18\x05 \x03(\v2\x16.rag.v1.ArtifactRecordR\tartifacts\x126\n" +
+	"\x17real_service_acceptance\x18\x06 \x01(\bR\x15realServiceAcceptance\"\xaa\x02\n" +
 	"\x14ParsePackageResponse\x12\x1b\n" +
 	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12\x1f\n" +
 	"\vsource_name\x18\x02 \x01(\tR\n" +
@@ -2672,7 +2856,7 @@ func file_rag_v1_rag_proto_rawDescGZIP() []byte {
 }
 
 var file_rag_v1_rag_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_rag_v1_rag_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_rag_v1_rag_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_rag_v1_rag_proto_goTypes = []any{
 	(JobStatus)(0),                       // 0: rag.v1.JobStatus
 	(*RequestContext)(nil),               // 1: rag.v1.RequestContext
@@ -2701,7 +2885,9 @@ var file_rag_v1_rag_proto_goTypes = []any{
 	(*ValidatePackageResponse)(nil),      // 24: rag.v1.ValidatePackageResponse
 	(*ParsedChunk)(nil),                  // 25: rag.v1.ParsedChunk
 	(*ParsedDocument)(nil),               // 26: rag.v1.ParsedDocument
-	(*ParsePackageResponse)(nil),         // 27: rag.v1.ParsePackageResponse
+	(*ArtifactRecord)(nil),               // 27: rag.v1.ArtifactRecord
+	(*ArtifactBundleReference)(nil),      // 28: rag.v1.ArtifactBundleReference
+	(*ParsePackageResponse)(nil),         // 29: rag.v1.ParsePackageResponse
 }
 var file_rag_v1_rag_proto_depIdxs = []int32{
 	1,  // 0: rag.v1.UnderstandRequest.context:type_name -> rag.v1.RequestContext
@@ -2724,30 +2910,32 @@ var file_rag_v1_rag_proto_depIdxs = []int32{
 	20, // 17: rag.v1.ValidatePackageRequest.files:type_name -> rag.v1.PackageFile
 	23, // 18: rag.v1.ValidatePackageResponse.documents:type_name -> rag.v1.ValidatedPackageDocument
 	25, // 19: rag.v1.ParsedDocument.chunks:type_name -> rag.v1.ParsedChunk
-	26, // 20: rag.v1.ParsePackageResponse.documents:type_name -> rag.v1.ParsedDocument
-	4,  // 21: rag.v1.RagService.Understand:input_type -> rag.v1.UnderstandRequest
-	7,  // 22: rag.v1.RagService.Search:input_type -> rag.v1.SearchRequest
-	9,  // 23: rag.v1.RagService.Generate:input_type -> rag.v1.GenerateRequest
-	11, // 24: rag.v1.RagService.ReloadSyntheticIndex:input_type -> rag.v1.ReloadSyntheticIndexRequest
-	14, // 25: rag.v1.IngestService.Submit:input_type -> rag.v1.SubmitRequest
-	16, // 26: rag.v1.IngestService.GetStatus:input_type -> rag.v1.GetStatusRequest
-	18, // 27: rag.v1.IngestService.Cancel:input_type -> rag.v1.CancelRequest
-	22, // 28: rag.v1.IngestService.ValidatePackage:input_type -> rag.v1.ValidatePackageRequest
-	21, // 29: rag.v1.IngestService.ParsePackage:input_type -> rag.v1.ParsePackageRequest
-	5,  // 30: rag.v1.RagService.Understand:output_type -> rag.v1.UnderstandResponse
-	8,  // 31: rag.v1.RagService.Search:output_type -> rag.v1.SearchResponse
-	10, // 32: rag.v1.RagService.Generate:output_type -> rag.v1.GenerateResponse
-	13, // 33: rag.v1.RagService.ReloadSyntheticIndex:output_type -> rag.v1.ReloadSyntheticIndexResponse
-	15, // 34: rag.v1.IngestService.Submit:output_type -> rag.v1.SubmitResponse
-	17, // 35: rag.v1.IngestService.GetStatus:output_type -> rag.v1.GetStatusResponse
-	19, // 36: rag.v1.IngestService.Cancel:output_type -> rag.v1.CancelResponse
-	24, // 37: rag.v1.IngestService.ValidatePackage:output_type -> rag.v1.ValidatePackageResponse
-	27, // 38: rag.v1.IngestService.ParsePackage:output_type -> rag.v1.ParsePackageResponse
-	30, // [30:39] is the sub-list for method output_type
-	21, // [21:30] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	28, // 20: rag.v1.ParsedDocument.artifact_bundle:type_name -> rag.v1.ArtifactBundleReference
+	27, // 21: rag.v1.ArtifactBundleReference.artifacts:type_name -> rag.v1.ArtifactRecord
+	26, // 22: rag.v1.ParsePackageResponse.documents:type_name -> rag.v1.ParsedDocument
+	4,  // 23: rag.v1.RagService.Understand:input_type -> rag.v1.UnderstandRequest
+	7,  // 24: rag.v1.RagService.Search:input_type -> rag.v1.SearchRequest
+	9,  // 25: rag.v1.RagService.Generate:input_type -> rag.v1.GenerateRequest
+	11, // 26: rag.v1.RagService.ReloadSyntheticIndex:input_type -> rag.v1.ReloadSyntheticIndexRequest
+	14, // 27: rag.v1.IngestService.Submit:input_type -> rag.v1.SubmitRequest
+	16, // 28: rag.v1.IngestService.GetStatus:input_type -> rag.v1.GetStatusRequest
+	18, // 29: rag.v1.IngestService.Cancel:input_type -> rag.v1.CancelRequest
+	22, // 30: rag.v1.IngestService.ValidatePackage:input_type -> rag.v1.ValidatePackageRequest
+	21, // 31: rag.v1.IngestService.ParsePackage:input_type -> rag.v1.ParsePackageRequest
+	5,  // 32: rag.v1.RagService.Understand:output_type -> rag.v1.UnderstandResponse
+	8,  // 33: rag.v1.RagService.Search:output_type -> rag.v1.SearchResponse
+	10, // 34: rag.v1.RagService.Generate:output_type -> rag.v1.GenerateResponse
+	13, // 35: rag.v1.RagService.ReloadSyntheticIndex:output_type -> rag.v1.ReloadSyntheticIndexResponse
+	15, // 36: rag.v1.IngestService.Submit:output_type -> rag.v1.SubmitResponse
+	17, // 37: rag.v1.IngestService.GetStatus:output_type -> rag.v1.GetStatusResponse
+	19, // 38: rag.v1.IngestService.Cancel:output_type -> rag.v1.CancelResponse
+	24, // 39: rag.v1.IngestService.ValidatePackage:output_type -> rag.v1.ValidatePackageResponse
+	29, // 40: rag.v1.IngestService.ParsePackage:output_type -> rag.v1.ParsePackageResponse
+	32, // [32:41] is the sub-list for method output_type
+	23, // [23:32] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_rag_v1_rag_proto_init() }
@@ -2770,7 +2958,7 @@ func file_rag_v1_rag_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rag_v1_rag_proto_rawDesc), len(file_rag_v1_rag_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   27,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

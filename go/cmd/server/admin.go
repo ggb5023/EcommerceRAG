@@ -923,15 +923,28 @@ func (g *gateway) persistParsedPackage(ctx context.Context, parsed *ragv1.ParseP
 		if err != nil {
 			return err
 		}
+		binding, bindingErr := validateArtifactBundle(document)
+		if bindingErr != nil {
+			return &adminConflictError{message: "parsed artifact bundle changed before persistence"}
+		}
+		quality, qualityErr := artifactQualityJSON(document, binding)
+		if qualityErr != nil {
+			return qualityErr
+		}
 		var versionID int64
+		sourceObjectKey := "db://source_file/" + strconv.FormatInt(fileIDs[document.DocumentId], 10)
+		parsedObjectKey := sourceObjectKey
+		if binding != nil {
+			sourceObjectKey = binding.RawObjectKey
+			parsedObjectKey = binding.ParsedObjectKey
+		}
 		err = tx.QueryRow(ctx, `INSERT INTO document_version(tenant_id,document_id,source_hash,parser_version,chunk_rule_version,
 			embedding_model,pipeline_version,object_key,parsed_object_key,status,chunk_count,disclosure_class,external_allowed,
 			source_manifest_id,quality_json)
 			VALUES($1,$2,$3,'deterministic-parser-v1','deterministic-chunk-v1','not_run',$4,$5,$6,'ready',$7,$8,false,$9,$10::jsonb)
 			RETURNING id`, tenantID, documentRow, document.SourceHash, parsed.PipelineVersion,
-			"db://source_file/"+strconv.FormatInt(fileIDs[document.DocumentId], 10),
-			"db://source_file/"+strconv.FormatInt(fileIDs[document.DocumentId], 10), len(document.Chunks), document.DisclosureClass,
-			manifestID, fmt.Sprintf(`{"chunk_count":%d,"empty_chunk_count":0,"parse_status":"passed","embedding_status":"not_run","index_mode":"deterministic_keyword","quality_gate":"passed"}`, len(document.Chunks))).Scan(&versionID)
+			sourceObjectKey, parsedObjectKey, len(document.Chunks), document.DisclosureClass,
+			manifestID, quality).Scan(&versionID)
 		if err != nil {
 			return err
 		}
@@ -959,11 +972,11 @@ func (g *gateway) persistParsedPackage(ctx context.Context, parsed *ragv1.ParseP
 				char_start,char_end,heading_path,content,embed_text,token_count,content_type,split_reason,embedding_model,embedding_dim,
 				tokenizer_id,effective_from,effective_to,meta_json,source_object_key,parsed_object_key,chunk_hash)
 				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12,$13,$14,'not_run',1024,'unicode-char-v1',
-				$15::date,$16::date,$17::jsonb,$18,$18,$19)`, versionID, documentRow, tenantID, shopID,
+				$15::date,$16::date,$17::jsonb,$18,$19,$20)`, versionID, documentRow, tenantID, shopID,
 				chunk.ChunkIndex, chunk.SectionSeq, chunk.SectionChunkIndex, chunk.CharStart, chunk.CharEnd,
 				chunk.HeadingPath, chunk.Content, chunk.TokenCount, chunk.ContentType, chunk.SplitReason,
 				nullableDate(effectiveFrom), nullableDate(effectiveTo), metadata,
-				"db://source_file/"+strconv.FormatInt(fileIDs[document.DocumentId], 10), chunk.ChunkHash)
+				sourceObjectKey, parsedObjectKey, chunk.ChunkHash)
 			if err != nil {
 				return err
 			}

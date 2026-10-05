@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import tempfile
 from datetime import date
@@ -11,7 +12,9 @@ from pathlib import Path, PurePosixPath
 import grpc
 import yaml
 
+from app.ingest.artifacts import ArtifactBundle, build_ingestion_artifacts, store_artifact_bundle
 from app.ingest.pipeline import chunk_elements_v2, parser_for
+from app.storage import FilesystemObjectStore, ObjectStore
 from rag.v1 import rag_pb2, rag_pb2_grpc
 
 MAX_MANIFEST_BYTES = 256 * 1024
@@ -26,6 +29,48 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 def _fail(context, message: str):
     context.abort(grpc.StatusCode.INVALID_ARGUMENT, message)
+
+
+def _artifact_store() -> ObjectStore | None:
+    """Return the opt-in synthetic bundle store; never enable it for M1."""
+
+    configured = os.environ.get("INGEST_ARTIFACT_BUNDLE_ROOT", "").strip()
+    if not configured:
+        return None
+    if os.environ.get("RAG_PROFILE") != "synthetic_import_mock":
+        raise RuntimeError("artifact bundle storage requires synthetic_import_mock")
+    root = Path(configured)
+    if not root.is_absolute():
+        raise RuntimeError("artifact bundle root must be absolute")
+    return FilesystemObjectStore(root)
+
+
+def _delete_bundles(store: ObjectStore | None, bundles: list[ArtifactBundle]) -> None:
+    if store is None:
+        return
+    for bundle in reversed(bundles):
+        for record in reversed(bundle.all_records):
+            try:
+                store.delete(record.object_key)
+            except Exception:  # noqa: BLE001 - abort path must stay redacted
+                pass
+
+
+def _bundle_reference(response, bundle: ArtifactBundle) -> None:
+    reference = response.artifact_bundle
+    reference.document_version_id = bundle.document_version_id
+    reference.manifest_object_key = bundle.manifest.object_key
+    reference.manifest_sha256 = bundle.manifest.sha256
+    reference.artifact_set_sha256 = bundle.artifact_set_sha256
+    reference.real_service_acceptance = False
+    for record in bundle.records:
+        reference.artifacts.add(
+            artifact_type=record.artifact_type,
+            object_key=record.object_key,
+            sha256=record.sha256,
+            size_bytes=record.size_bytes,
+            content_type=record.content_type,
+        )
 
 
 def _date_text(value, field: str, context) -> str:
@@ -176,6 +221,17 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
 
     def ParsePackage(self, request, context):
         package = _inspect_package(request, context)
+        artifact_store: ObjectStore | None = None
+        try:
+            artifact_store = _artifact_store()
+        except (OSError, RuntimeError, ValueError) as exc:
+            _fail(context, f"artifact bundle configuration is invalid: {type(exc).__name__}")
+        bundles: list[ArtifactBundle] = []
+
+        def fail(message: str):
+            _delete_bundles(artifact_store, bundles)
+            _fail(context, message)
+
         response = rag_pb2.ParsePackageResponse(
             source_id=package["source_id"],
             source_name=package["source_name"],
@@ -208,9 +264,9 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
                     )
                     chunks = chunk_elements_v2(elements)
                 except (OSError, UnicodeError, ValueError, KeyError, RuntimeError):
-                    _fail(context, "document could not be parsed")
+                    fail("document could not be parsed")
                 if not chunks:
-                    _fail(context, "document produced no content chunks")
+                    fail("document produced no content chunks")
                 parsed = response.documents.add(
                     document_id=spec["document_id"],
                     title=spec["title"],
@@ -242,6 +298,36 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
                         chunk_hash=chunk.chunk_hash,
                         metadata_json=json.dumps(chunk.metadata, ensure_ascii=False, sort_keys=True),
                     )
+                if artifact_store is not None:
+                    try:
+                        bundle = store_artifact_bundle(
+                            artifact_store,
+                            tenant_id=request.tenant_id,
+                            shop_id=request.shop_id,
+                            document_version_id=spec["version_id"],
+                            parser_version="grpc-local-parser-v1",
+                            chunk_rule_version="structured-v2",
+                            artifacts=build_ingestion_artifacts(
+                                raw=package["uploaded"][spec["path"]],
+                                elements=elements,
+                                chunks=chunks,
+                                parse_report={
+                                    "status": "PASS",
+                                    "document_id": spec["document_id"],
+                                    "document_version_id": spec["version_id"],
+                                    "source_hash": spec["source_hash"],
+                                    "parser_version": "grpc-local-parser-v1",
+                                    "chunk_rule_version": "structured-v2",
+                                    "element_count": len(elements),
+                                    "chunk_count": len(chunks),
+                                    "real_service_acceptance": False,
+                                },
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - provider/storage details stay redacted
+                        fail(f"artifact bundle could not be stored: {type(exc).__name__}")
+                    bundles.append(bundle)
+                    _bundle_reference(parsed, bundle)
                 dataset_rows.append({
                     "document_id": spec["document_id"],
                     "source_hash": spec["source_hash"],

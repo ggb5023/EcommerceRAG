@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	ragv1 "github.com/ggb5023/EcommerceRAG/go/internal/pb/rag/v1"
@@ -36,6 +37,44 @@ func parsedPackageFixture() (*ingestClaim, *ragv1.ParsePackageResponse) {
 	}
 	parsed.DatasetSha256 = datasetHash
 	return claim, parsed
+}
+
+func artifactBoundDocument() *ragv1.ParsedDocument {
+	_, parsed := parsedPackageFixture()
+	document := parsed.Documents[0]
+	versionID := "v-0123456789abcdef0123"
+	records := make([]artifactRecordCanonical, 0, 4)
+	for _, artifactType := range []string{"chunks", "parse-report", "parsed", "raw"} {
+		dataDigest := sha256.Sum256([]byte(artifactType + "-bytes"))
+		digest := hex.EncodeToString(dataDigest[:])
+		records = append(records, artifactRecordCanonical{
+			ArtifactType: artifactType,
+			ContentType:  "application/octet-stream",
+			ObjectKey:    "tenant-a/shop-a/" + versionID + "/" + artifactType + "/" + digest,
+			SHA256:       digest,
+			SizeBytes:    int64(len(artifactType) + 6),
+		})
+	}
+	setBytes, _ := json.Marshal(artifactSetCanonical{Artifacts: records})
+	setDigest := sha256.Sum256(setBytes)
+	manifestDigest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	reference := &ragv1.ArtifactBundleReference{
+		DocumentVersionId: versionID,
+		ManifestObjectKey: "tenant-a/shop-a/" + versionID + "/artifact-manifest/" + manifestDigest,
+		ManifestSha256:    manifestDigest,
+		ArtifactSetSha256: hex.EncodeToString(setDigest[:]),
+	}
+	for _, record := range records {
+		reference.Artifacts = append(reference.Artifacts, &ragv1.ArtifactRecord{
+			ArtifactType: record.ArtifactType,
+			ObjectKey:    record.ObjectKey,
+			Sha256:       record.SHA256,
+			SizeBytes:    record.SizeBytes,
+			ContentType:  record.ContentType,
+		})
+	}
+	document.ArtifactBundle = reference
+	return document
 }
 
 func TestIngestWorkerTestHoldDisabledOutsideTest(t *testing.T) {
@@ -163,5 +202,58 @@ func TestValidateParsedPackageRejectsDuplicateAndInvalidOrdering(t *testing.T) {
 	qualityErr, ok = validateParsedPackage(claim, parsed).(*ingestParseQualityError)
 	if !ok || qualityErr.code != "parse_chunk_position_invalid" {
 		t.Fatalf("expected parse_chunk_position_invalid, got %T %v", validateParsedPackage(claim, parsed), validateParsedPackage(claim, parsed))
+	}
+}
+
+func TestValidateArtifactBundleAcceptsCanonicalReference(t *testing.T) {
+	document := artifactBoundDocument()
+	binding, err := validateArtifactBundle(document)
+	if err != nil {
+		t.Fatalf("valid artifact bundle rejected: %v", err)
+	}
+	if binding.RawObjectKey == "" || binding.ParsedObjectKey == "" || len(binding.ArtifactTypes) != 4 {
+		t.Fatalf("artifact binding did not expose required artifacts: %#v", binding)
+	}
+}
+
+func TestValidateArtifactBundleRejectsManifestHashMismatch(t *testing.T) {
+	document := artifactBoundDocument()
+	document.ArtifactBundle.ManifestObjectKey = strings.Replace(document.ArtifactBundle.ManifestObjectKey,
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 1)
+	if _, err := validateArtifactBundle(document); err == nil {
+		t.Fatal("expected manifest object key/hash mismatch to fail")
+	}
+}
+
+func TestValidateArtifactBundleRejectsArtifactSetHashMismatch(t *testing.T) {
+	document := artifactBoundDocument()
+	document.ArtifactBundle.ArtifactSetSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if _, err := validateArtifactBundle(document); err == nil {
+		t.Fatal("expected artifact set hash mismatch to fail")
+	}
+}
+
+func TestValidateArtifactBundleRejectsMissingRequiredArtifact(t *testing.T) {
+	document := artifactBoundDocument()
+	document.ArtifactBundle.Artifacts = document.ArtifactBundle.Artifacts[:3]
+	if _, err := validateArtifactBundle(document); err == nil {
+		t.Fatal("expected missing artifact to fail")
+	}
+}
+
+func TestValidateArtifactBundleRejectsRealServiceAcceptance(t *testing.T) {
+	document := artifactBoundDocument()
+	document.ArtifactBundle.RealServiceAcceptance = true
+	if _, err := validateArtifactBundle(document); err == nil {
+		t.Fatal("expected real service acceptance claim to fail")
+	}
+}
+
+func TestValidateArtifactBundleRejectsUnsafeObjectKey(t *testing.T) {
+	document := artifactBoundDocument()
+	document.ArtifactBundle.Artifacts[0].ObjectKey = "tenant-a/../shop-a/v-0123456789abcdef0123/chunks/" + document.ArtifactBundle.Artifacts[0].Sha256
+	if _, err := validateArtifactBundle(document); err == nil {
+		t.Fatal("expected unsafe artifact object key to fail")
 	}
 }

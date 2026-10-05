@@ -224,6 +224,22 @@ message ParsedDocument {
   string effective_from = 8;
   string effective_to = 9;
   repeated ParsedChunk chunks = 10;
+  ArtifactBundleReference artifact_bundle = 11;
+}
+message ArtifactRecord {
+  string artifact_type = 1;
+  string object_key = 2;
+  string sha256 = 3;
+  int64 size_bytes = 4;
+  string content_type = 5;
+}
+message ArtifactBundleReference {
+  string document_version_id = 1;
+  string manifest_object_key = 2;
+  string manifest_sha256 = 3;
+  string artifact_set_sha256 = 4;
+  repeated ArtifactRecord artifacts = 5;
+  bool real_service_acceptance = 6;
 }
 message ParsePackageResponse {
   string source_id = 1;

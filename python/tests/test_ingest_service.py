@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import grpc
 from app.ingest.service import IngestService
+from app.ingest.artifacts import read_manifest
+from app.storage import FilesystemObjectStore
 from rag.v1 import rag_pb2
 
 
@@ -91,6 +93,58 @@ class IngestServiceTests(unittest.TestCase):
         request = self.make_request(content=b"\n\n")
         with self.assertRaisesRegex(RuntimeError, "no content chunks"):
             IngestService().ParsePackage(request, AbortContext())
+
+    def test_synthetic_profile_returns_verified_artifact_bundle_reference(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                "os.environ",
+                {
+                    "RAG_PROFILE": "synthetic_import_mock",
+                    "INGEST_ARTIFACT_BUNDLE_ROOT": directory,
+                },
+                clear=False,
+            ):
+                result = IngestService().ParsePackage(self.make_request(), AbortContext())
+            reference = result.documents[0].artifact_bundle
+            self.assertTrue(reference.document_version_id)
+            self.assertRegex(reference.manifest_sha256, r"^[0-9a-f]{64}$")
+            self.assertRegex(reference.artifact_set_sha256, r"^[0-9a-f]{64}$")
+            self.assertFalse(reference.real_service_acceptance)
+            self.assertEqual(
+                {record.artifact_type for record in reference.artifacts},
+                {"raw", "parsed", "chunks", "parse-report"},
+            )
+            store = FilesystemObjectStore(directory)
+            for record in reference.artifacts:
+                data, metadata = store.get_bytes(record.object_key, expected_sha256=record.sha256)
+                self.assertEqual(len(data), record.size_bytes)
+                self.assertEqual(metadata.sha256, record.sha256)
+            manifest_record = store.head(reference.manifest_object_key)
+            self.assertEqual(manifest_record.sha256, reference.manifest_sha256)
+            # The helper also verifies artifact_set_sha256 and the boundary flag.
+            bundle_like = type("Bundle", (), {
+                "manifest": type("Manifest", (), {
+                    "object_key": reference.manifest_object_key,
+                    "sha256": reference.manifest_sha256,
+                    "size_bytes": manifest_record.size_bytes,
+                })(),
+                "artifact_set_sha256": reference.artifact_set_sha256,
+            })()
+            self.assertEqual(read_manifest(store, bundle_like)["real_service_acceptance"], False)
+
+    def test_artifact_bundle_root_is_not_allowed_for_m1_profile(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                "os.environ",
+                {"RAG_PROFILE": "m1_fixture_mock", "INGEST_ARTIFACT_BUNDLE_ROOT": directory},
+                clear=False,
+            ):
+                with self.assertRaises(RuntimeError):
+                    IngestService().ParsePackage(self.make_request(), AbortContext())
 
 
 if __name__ == "__main__":
