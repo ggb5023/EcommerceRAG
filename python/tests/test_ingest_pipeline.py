@@ -74,6 +74,42 @@ def test_csv_bom_keeps_tenant_filtering_at_header_boundary(tmp_path: Path):
     assert all("OTHER" not in element.content for element in elements)
 
 
+def test_csv_quoted_multiline_records_keep_physical_source_range(tmp_path: Path):
+    path = tmp_path / "multiline.csv"
+    path.write_text(
+        "sku_id,description\n"
+        "SYN-003,\"第一行\n第二行，含逗号, 仍是一个字段\"\n",
+        encoding="utf-8",
+    )
+    elements = CSVParser().parse(path, document_id="products", version_id="v1", metadata=metadata())
+    assert len(elements) == 1
+    assert elements[0].source_position == {"line_start": 2, "line_end": 3, "record_number": 1}
+    assert "第二行，含逗号" in elements[0].content
+
+
+def test_csv_rejects_duplicate_or_empty_headers(tmp_path: Path):
+    import pytest
+
+    duplicate = tmp_path / "duplicate.csv"
+    duplicate.write_text("sku_id,sku_id\nSYN-001,value\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="csv_header_duplicate"):
+        CSVParser().parse(duplicate, document_id="doc", version_id="v1", metadata=metadata())
+
+    empty = tmp_path / "empty-header.csv"
+    empty.write_text("sku_id,\nSYN-001,value\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="csv_header_empty"):
+        CSVParser().parse(empty, document_id="doc", version_id="v1", metadata=metadata())
+
+
+def test_csv_rejects_column_mismatch_with_record_location(tmp_path: Path):
+    import pytest
+
+    path = tmp_path / "bad-rows.csv"
+    path.write_text("sku_id,name,price\nSYN-001,完整,9\nSYN-002,缺列\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="csv_column_mismatch:row=3"):
+        CSVParser().parse(path, document_id="doc", version_id="v1", metadata=metadata())
+
+
 def test_adjacent_expansion_reapplies_all_scope_filters(tmp_path: Path):
     path = tmp_path / "long.md"
     path.write_text("目标商品" + "邻接正文" * 30, encoding="utf-8")

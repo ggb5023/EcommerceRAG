@@ -244,7 +244,36 @@ class CSVParser:
         # unchanged, while tenant/shop headers still participate in scope
         # filtering for files exported by spreadsheet tools.
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            for row_number, row in enumerate(csv.DictReader(handle), 2):
+            reader = csv.reader(handle)
+            headers: list[str] | None = None
+            previous_line_end = 0
+            record_number = 0
+            for raw_row in reader:
+                line_end = reader.line_num
+                # Empty physical rows do not create records or alter the
+                # source range of the next record.
+                if not raw_row or all(not value.strip() for value in raw_row):
+                    continue
+                if headers is None:
+                    headers = list(raw_row)
+                    if any(not header.strip() for header in headers):
+                        raise ValueError("csv_header_empty")
+                    if len(set(headers)) != len(headers):
+                        raise ValueError("csv_header_duplicate")
+                    previous_line_end = line_end
+                    continue
+                if len(raw_row) != len(headers):
+                    raise ValueError(f"csv_column_mismatch:row={line_end}")
+                record_number += 1
+                # csv.reader exposes the physical end line.  Count embedded
+                # newlines in fields to recover the physical start line for
+                # quoted multiline records without rewriting source bytes.
+                physical_lines = max((value.count("\n") for value in raw_row), default=0) + 1
+                line_start = line_end - physical_lines + 1
+                if line_start <= previous_line_end:
+                    line_start = previous_line_end + 1
+                previous_line_end = line_end
+                row = dict(zip(headers, raw_row))
                 values = [f"{key}: {value}" for key, value in row.items() if value not in (None, "")]
                 row_tenant = row.get("tenant_id")
                 row_shop = row.get("shop_id")
@@ -264,7 +293,8 @@ class CSVParser:
                     row_metadata["fact_type"] = row["fact_type"]
                 elements.append(_common(
                     document_id, version_id, row_metadata, metadata.get("title", document_id),
-                    "\n".join(values), {"line_start": row_number, "line_end": row_number},
+                    "\n".join(values), {"line_start": line_start, "line_end": line_end,
+                                        "record_number": record_number},
                     element_type="table", table_body=[values],
                 ))
         return elements
