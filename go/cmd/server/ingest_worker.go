@@ -971,6 +971,7 @@ func (g *gateway) cleanupParsedArtifacts(claim *ingestClaim, parsed *ragv1.Parse
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	clean := true
 	for _, document := range parsed.Documents {
 		if document == nil || document.ArtifactBundle == nil {
 			continue
@@ -982,8 +983,11 @@ func (g *gateway) cleanupParsedArtifacts(claim *ingestClaim, parsed *ragv1.Parse
 		})
 		_ = response
 		if err != nil || response == nil || !response.Complete {
-			return errIngestArtifactCleanup
+			clean = false
 		}
+	}
+	if !clean {
+		return errIngestArtifactCleanup
 	}
 	return nil
 }

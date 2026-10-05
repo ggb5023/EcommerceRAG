@@ -15,12 +15,20 @@ import (
 
 type cleanupIngestClient struct {
 	ragv1.IngestServiceClient
-	response *ragv1.DeleteArtifactBundleResponse
-	request  *ragv1.DeleteArtifactBundleRequest
+	response  *ragv1.DeleteArtifactBundleResponse
+	request   *ragv1.DeleteArtifactBundleRequest
+	responses []*ragv1.DeleteArtifactBundleResponse
+	requests  []*ragv1.DeleteArtifactBundleRequest
 }
 
 func (c *cleanupIngestClient) DeleteArtifactBundle(_ context.Context, request *ragv1.DeleteArtifactBundleRequest, _ ...grpc.CallOption) (*ragv1.DeleteArtifactBundleResponse, error) {
 	c.request = request
+	c.requests = append(c.requests, request)
+	if len(c.responses) > 0 {
+		response := c.responses[0]
+		c.responses = c.responses[1:]
+		return response, nil
+	}
 	return c.response, nil
 }
 
@@ -367,5 +375,24 @@ func TestCleanupParsedArtifactsReportsIncompleteResponse(t *testing.T) {
 
 	if err := gateway.cleanupParsedArtifacts(claim, parsed); !errors.Is(err, errIngestArtifactCleanup) {
 		t.Fatalf("expected redacted cleanup error, got %v", err)
+	}
+}
+
+func TestCleanupParsedArtifactsAttemptsEveryBundleAfterFailure(t *testing.T) {
+	first := artifactBoundDocument()
+	second := artifactBoundDocument()
+	client := &cleanupIngestClient{responses: []*ragv1.DeleteArtifactBundleResponse{
+		{Complete: false, ErrorCode: "cleanup_incomplete"},
+		{Complete: true},
+	}}
+	gateway := &gateway{ingest: client}
+	claim := &ingestClaim{TenantID: 7, ShopID: "shop-1"}
+	parsed := &ragv1.ParsePackageResponse{Documents: []*ragv1.ParsedDocument{first, second}}
+
+	if err := gateway.cleanupParsedArtifacts(claim, parsed); !errors.Is(err, errIngestArtifactCleanup) {
+		t.Fatalf("expected aggregate cleanup error, got %v", err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("cleanup stopped after the first failed bundle: %d requests", len(client.requests))
 	}
 }
