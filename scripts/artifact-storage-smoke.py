@@ -133,6 +133,7 @@ def _run(store, *, backend: str, cleanup: bool = True, output: Path | None = Non
     cleanup_error = False
     checks = {
         "bundle_written": False,
+        "repeat_idempotent": False,
         "manifest_verified": False,
         "artifacts_verified": False,
         "cleanup": not cleanup,
@@ -148,6 +149,17 @@ def _run(store, *, backend: str, cleanup: bool = True, output: Path | None = Non
             artifacts=inputs,
         )
         checks["bundle_written"] = len(bundle.records) == len(inputs)
+        repeated = store_artifact_bundle(
+            store,
+            tenant_id="ecr-smoke-tenant",
+            shop_id="ecr-smoke-shop",
+            document_version_id=bundle.document_version_id,
+            parser_version="parser-v1",
+            chunk_rule_version="structured-v2",
+            artifacts=inputs,
+        )
+        checks["repeat_idempotent"] = repeated == bundle
+        bundle = repeated
         manifest = read_manifest(store, bundle)
         checks["manifest_verified"] = (
             manifest.get("artifact_set_sha256") == bundle.artifact_set_sha256

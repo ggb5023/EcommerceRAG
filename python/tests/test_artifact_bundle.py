@@ -138,6 +138,39 @@ class ArtifactBundleTests(unittest.TestCase):
                 self.assertEqual(record.object_key.split("/")[-1], record.sha256)
                 self.assertEqual(store.head(record.object_key).sha256, record.sha256)
 
+    def test_repeating_same_bundle_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = FilesystemObjectStore(directory)
+            inputs = (
+                ArtifactInput("raw", b"raw", "text/plain"),
+                ArtifactInput("parsed", b"parsed", "text/plain"),
+            )
+            first = store_artifact_bundle(
+                store,
+                tenant_id="tenant-a",
+                shop_id="shop-a",
+                document_version_id="version-1",
+                parser_version="parser-v1",
+                chunk_rule_version="structured-v2",
+                artifacts=inputs,
+            )
+            second = store_artifact_bundle(
+                store,
+                tenant_id="tenant-a",
+                shop_id="shop-a",
+                document_version_id="version-1",
+                parser_version="parser-v1",
+                chunk_rule_version="structured-v2",
+                artifacts=inputs,
+            )
+            self.assertEqual(second, first)
+            self.assertEqual(read_artifact_bundle(store, second), {
+                "parsed": b"parsed",
+                "raw": b"raw",
+            })
+            files = [path for path in Path(directory).rglob("*") if path.is_file()]
+            self.assertEqual(len(files), len(first.all_records))
+
     def test_failed_bundle_rolls_back_objects_written_by_this_call(self):
         with tempfile.TemporaryDirectory() as directory:
             filesystem = FilesystemObjectStore(directory)
