@@ -46,6 +46,19 @@ def test_fixture_validator_rejects_unsafe_and_duplicate_manifest_paths(tmp_path:
     assert any(error.startswith("duplicate_path:") for error in report["errors"])
 
 
+def test_fixture_validator_rejects_intermediate_directory_symlink(tmp_path: Path):
+    root = tmp_path / "source-fixtures"
+    manifest = build(root)
+    (root / "alias").symlink_to(root / "markdown", target_is_directory=True)
+    manifest["fixtures"][0]["path"] = "alias/md-faq-short-v1.md"
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = validate(root)
+
+    assert report["status"] == "FAIL"
+    assert "unsafe_path:md-faq-short-v1" in report["errors"]
+
+
 def test_fixture_validator_rejects_invalid_manifest_without_raising(tmp_path: Path):
     root = tmp_path / "source-fixtures"
     root.mkdir()

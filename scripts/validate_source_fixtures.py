@@ -32,8 +32,11 @@ def safe_fixture_path(root: Path, raw_path: object) -> Path | None:
         return None
     root = root.resolve()
     candidate = root.joinpath(*relative.parts)
-    if candidate.is_symlink():
-        return None
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            return None
     try:
         candidate.resolve().relative_to(root)
     except ValueError:
