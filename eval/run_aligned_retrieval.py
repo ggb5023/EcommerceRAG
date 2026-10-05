@@ -33,10 +33,11 @@ def _load_lines(path: Path) -> list[dict]:
 
 
 def _not_run_report(cases_path: Path, corpus_path: Path, alignment_path: Path,
-                    *, issues: list[str], case_count: int = 0) -> dict:
+                    *, issues: list[str], case_count: int = 0,
+                    eval_set_version: str = "synthetic-m2-v1") -> dict:
     return {
         "report_version": "aligned-retrieval-v2",
-        "eval_set_version": "synthetic-m2-v1",
+        "eval_set_version": eval_set_version,
         "input_sha256": hashlib.sha256(cases_path.read_bytes()).hexdigest() if cases_path.is_file() else None,
         "corpus_sha256": hashlib.sha256(corpus_path.read_bytes()).hexdigest() if corpus_path.is_file() else None,
         "alignment_sha256": hashlib.sha256(alignment_path.read_bytes()).hexdigest() if alignment_path.is_file() else None,
@@ -101,15 +102,22 @@ def main() -> int:
         default=Path("/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned/documents.jsonl"),
     )
     parser.add_argument("--alignment", type=Path)
+    parser.add_argument("--metadata", type=Path, default=root / "synthetic_cases.metadata.json")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
     alignment_path = args.alignment or args.corpus.with_name("alignment.json")
     try:
+        metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
+        eval_set_version = metadata.get("eval_set_version", "synthetic-m2-v1")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        eval_set_version = "synthetic-m2-v1"
+    try:
         cases = _load_lines(args.cases)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         report = _not_run_report(args.cases, args.corpus, alignment_path,
-                                 issues=[f"cases_input_invalid:{type(error).__name__}"])
+                                 issues=[f"cases_input_invalid:{type(error).__name__}"],
+                                 eval_set_version=eval_set_version)
         if args.output:
             args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({key: report[key] for key in ("status", "case_count", "measured_case_count", "metrics", "real_service_acceptance")}))
@@ -118,7 +126,8 @@ def main() -> int:
         corpus = _load_lines(args.corpus)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         report = _not_run_report(args.cases, args.corpus, alignment_path,
-                                 issues=[f"corpus_input_invalid:{type(error).__name__}"], case_count=len(cases))
+                                 issues=[f"corpus_input_invalid:{type(error).__name__}"], case_count=len(cases),
+                                 eval_set_version=eval_set_version)
         if args.output:
             args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({key: report[key] for key in ("status", "case_count", "measured_case_count", "metrics", "real_service_acceptance")}))
@@ -274,7 +283,7 @@ def main() -> int:
     measured = [row for row in rows if row["status"] == "MEASURED"]
     report = {
         "report_version": "aligned-retrieval-v2",
-        "eval_set_version": "synthetic-m2-v1",
+        "eval_set_version": eval_set_version,
         "input_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "corpus_sha256": hashlib.sha256(args.corpus.read_bytes()).hexdigest(),
         "alignment_sha256": hashlib.sha256(alignment_path.read_bytes()).hexdigest() if alignment_path.exists() else None,

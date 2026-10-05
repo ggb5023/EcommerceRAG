@@ -101,7 +101,13 @@ def _load_corpus(path: Path | None) -> dict[str, dict[str, Any]]:
     return corpus
 
 
-def build_proposal(cases_path: Path, manifest_path: Path, corpus_path: Path | None = None) -> dict[str, Any]:
+def build_proposal(
+    cases_path: Path,
+    manifest_path: Path,
+    corpus_path: Path | None = None,
+    *,
+    metadata_path: Path | None = None,
+) -> dict[str, Any]:
     cases = _load_cases(cases_path)
     documents = _load_manifest(manifest_path)
     corpus = _load_corpus(corpus_path)
@@ -205,11 +211,24 @@ def build_proposal(cases_path: Path, manifest_path: Path, corpus_path: Path | No
             risk_case_count += 1
             risk_counts.update(reasons)
 
+    eval_set_version = "synthetic-m2-v1"
+    metadata_sha256 = None
+    if metadata_path is not None:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("eval_set_version"), str):
+            raise ValueError("metadata must contain eval_set_version")
+        if metadata.get("case_count") != len(cases):
+            raise ValueError("metadata case_count does not match cases")
+        if metadata.get("sha256") != _sha256(cases_path):
+            raise ValueError("metadata sha256 does not match cases")
+        eval_set_version = metadata["eval_set_version"]
+        metadata_sha256 = _sha256(metadata_path)
     return {
-        "alignment_version": "synthetic-m2-v1-to-ecommerce-m2-aligned-v1-v1",
+        "alignment_version": f"{eval_set_version}-to-ecommerce-m2-aligned-v1-v1",
         "status": ALLOWED_STATUS,
-        "eval_set_version": "synthetic-m2-v1",
+        "eval_set_version": eval_set_version,
         "cases_sha256": _sha256(cases_path),
+        "metadata_sha256": metadata_sha256,
         "source_manifest_sha256": _sha256(manifest_path),
         "source_corpus_sha256": _sha256(corpus_path) if corpus_path else None,
         "case_count": len(cases),
@@ -232,11 +251,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parent
     parser.add_argument("--cases", type=Path, default=root / "synthetic_cases.jsonl")
+    parser.add_argument("--metadata", type=Path, help="metadata binding for an explicit eval-set version")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, help="optional JSONL corpus for chunk position evidence")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    proposal = build_proposal(args.cases, args.manifest, args.corpus)
+    proposal = build_proposal(args.cases, args.manifest, args.corpus, metadata_path=args.metadata)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(proposal, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: proposal[key] for key in ("status", "case_count", "source_document_count", "mapped_case_count", "issues", "real_service_acceptance")}, ensure_ascii=False))
