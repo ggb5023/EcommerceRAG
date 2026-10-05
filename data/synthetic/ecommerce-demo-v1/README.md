@@ -18,6 +18,19 @@ python -m app.ingest import --manifest data/synthetic/ecommerce-demo-v1/manifest
 python -m app.ingest status --dataset ecommerce-demo-v1
 ```
 
+要验证解析产物和对象存储边界，可在受限临时目录运行离线 bundle 入口：
+
+```bash
+PYTHONPATH=python python/.venv/bin/python -m app.ingest bundle \
+  --manifest data/synthetic/ecommerce-demo-v1/manifest.yaml \
+  --store-root /var/lib/ecommerce-rag/real-docs/synthetic-bundle-v1/objects \
+  --output /var/lib/ecommerce-rag/real-docs/synthetic-bundle-v1/report.json
+```
+
+该命令只使用 filesystem object store；9 个内容文档会生成 raw/parsed/chunks/parse-report
+bundle，ACL YAML 会标记为 `SKIPPED_CONTROL`。报告只保存版本、对象键关联、大小、哈希和计数，
+`real_service_acceptance=false`；它不写 PostgreSQL、不发布资料版本，也不接入 M1 客服。
+
 导入 CLI 使用本地文件和 `.local/ingest-state` 状态目录，不写 PostgreSQL 或 OSS。任一校验错误会拒绝整个数据包，不产生部分索引。ACL YAML 只作为内部测试记录导入，不会授予服务端权限。
 
 本地检索入口：
