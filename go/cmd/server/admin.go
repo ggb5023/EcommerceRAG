@@ -1704,17 +1704,60 @@ func (g *gateway) loadActiveAdminIndexes(ctx context.Context) error {
 			return err
 		}
 	}
+	fingerprint, err := g.activeAdminIndexFingerprint(ctx)
+	if err != nil {
+		return err
+	}
+	g.adminIndexFingerprint = fingerprint
 	g.adminIndexReady.Store(true)
 	return nil
 }
 
+func (g *gateway) activeAdminIndexFingerprint(ctx context.Context) (string, error) {
+	rows, err := g.db.Query(ctx, `SELECT d.logical_key,COALESCE(d.active_version_id,0),
+		COALESCE(v.status,''),COALESCE(v.disclosure_class,'')
+		FROM document d
+		JOIN source s ON s.tenant_id=d.tenant_id AND s.id=d.source_id
+		LEFT JOIN document_version v ON v.tenant_id=d.tenant_id AND v.id=d.active_version_id
+		WHERE d.tenant_id=$1 AND s.type='admin_manifest' AND s.shop_id=ANY($2::text[])
+		ORDER BY s.shop_id,d.logical_key`, g.session.tenantID, g.session.allowedShops)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	hash := sha256.New()
+	for rows.Next() {
+		var key, statusText, disclosure string
+		var versionID int64
+		if err := rows.Scan(&key, &versionID, &statusText, &disclosure); err != nil {
+			return "", err
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%s\x00%s\n", key, versionID, statusText, disclosure)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 func (g *gateway) ensureAdminIndexReady(ctx context.Context) error {
-	if g.profile != "synthetic_import_mock" || g.adminIndexReady.Load() {
+	if g.profile != "synthetic_import_mock" {
+		return nil
+	}
+	fingerprint, err := g.activeAdminIndexFingerprint(ctx)
+	if err != nil {
+		return err
+	}
+	g.adminIndexMu.RLock()
+	ready := g.adminIndexReady.Load()
+	currentFingerprint := g.adminIndexFingerprint
+	g.adminIndexMu.RUnlock()
+	if ready && fingerprint == currentFingerprint {
 		return nil
 	}
 	g.adminIndexMu.Lock()
 	defer g.adminIndexMu.Unlock()
-	if g.adminIndexReady.Load() {
+	if g.adminIndexReady.Load() && fingerprint == g.adminIndexFingerprint {
 		return nil
 	}
 	return g.loadActiveAdminIndexes(ctx)
@@ -1738,6 +1781,11 @@ func (g *gateway) completeAdminIndexTransition(ctx context.Context, versionIDs [
 	if err := g.reloadPublishedIndex(ctx, versionIDs); err != nil {
 		return err
 	}
+	fingerprint, err := g.activeAdminIndexFingerprint(ctx)
+	if err != nil {
+		return err
+	}
+	g.adminIndexFingerprint = fingerprint
 	if g.profile == "synthetic_import_mock" {
 		g.adminIndexReady.Store(true)
 	}

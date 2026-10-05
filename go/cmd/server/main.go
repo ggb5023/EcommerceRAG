@@ -124,8 +124,13 @@ type gateway struct {
 	revisionMu      sync.RWMutex
 	adminIndexMu    sync.RWMutex
 	adminIndexReady atomic.Bool
-	ready           atomic.Bool
-	cancels         map[string]context.CancelFunc
+	// adminIndexFingerprint is protected by adminIndexMu. It lets separate
+	// gateway processes notice a publish/rollback made by another process
+	// without sharing the Python process or treating a stale local index as
+	// authoritative.
+	adminIndexFingerprint string
+	ready                 atomic.Bool
+	cancels               map[string]context.CancelFunc
 }
 
 type apiError struct {
