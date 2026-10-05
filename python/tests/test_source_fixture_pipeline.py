@@ -57,6 +57,20 @@ def test_fixture_validator_rejects_invalid_manifest_without_raising(tmp_path: Pa
     assert report["errors"] == ["manifest_invalid:JSONDecodeError"]
 
 
+def test_fixture_validator_rejects_untyped_ids_and_tags_without_raising(tmp_path: Path):
+    root = tmp_path / "source-fixtures"
+    manifest = build(root)
+    manifest["fixtures"][0]["fixture_id"] = {"not": "a string"}
+    manifest["fixtures"][1]["scenario_tags"] = "not-a-list"
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = validate(root)
+
+    assert report["status"] == "FAIL"
+    assert "invalid_fixture_id:0" in report["errors"]
+    assert "invalid_scenario_tags:md-policy-long-v1" in report["errors"]
+
+
 def test_source_parser_fails_closed_on_unsafe_manifest_path(tmp_path: Path):
     root = tmp_path / "source-fixtures"
     manifest = build(root)

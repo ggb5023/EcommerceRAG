@@ -63,19 +63,25 @@ def validate(root: Path) -> dict:
             errors.append(f"fixture_not_object:{index}")
             continue
         fixture_id = item.get("fixture_id")
-        if not fixture_id or fixture_id in seen:
-            errors.append(f"duplicate_or_missing_fixture_id:{fixture_id}")
-        seen.add(fixture_id)
+        if not isinstance(fixture_id, str) or not fixture_id.strip():
+            errors.append(f"invalid_fixture_id:{index}")
+            fixture_label = f"<fixture-{index}>"
+        elif fixture_id in seen:
+            errors.append(f"duplicate_fixture_id:{fixture_id}")
+            fixture_label = fixture_id
+        else:
+            seen.add(fixture_id)
+            fixture_label = fixture_id
         status = item.get("expected_parse_status")
         if status not in ALLOWED:
-            errors.append(f"invalid_expected_parse_status:{fixture_id}")
+            errors.append(f"invalid_expected_parse_status:{fixture_label}")
         format_name = item.get("format")
         if format_name not in FORMATS:
-            errors.append(f"invalid_format:{fixture_id}")
+            errors.append(f"invalid_format:{fixture_label}")
         raw_path = item.get("path")
         path = safe_fixture_path(root, raw_path)
         if path is None:
-            errors.append(f"unsafe_path:{fixture_id}")
+            errors.append(f"unsafe_path:{fixture_label}")
             continue
         normalized_path = path.relative_to(root.resolve()).as_posix()
         if normalized_path in seen_paths:
@@ -86,14 +92,17 @@ def validate(root: Path) -> dict:
             continue
         suffixes = EXPECTED_SUFFIXES.get(format_name)
         if suffixes is not None and path.suffix.lower() not in suffixes:
-            errors.append(f"format_extension_mismatch:{fixture_id}")
+            errors.append(f"format_extension_mismatch:{fixture_label}")
         actual_hash = sha256(path)
         if actual_hash != item.get("sha256"):
-            errors.append(f"sha256_mismatch:{fixture_id}")
+            errors.append(f"sha256_mismatch:{fixture_label}")
         if path.stat().st_size != item.get("size_bytes"):
-            errors.append(f"size_mismatch:{fixture_id}")
-        if not item.get("scenario_tags"):
-            errors.append(f"missing_scenario_tags:{fixture_id}")
+            errors.append(f"size_mismatch:{fixture_label}")
+        tags = item.get("scenario_tags")
+        if (not isinstance(tags, list)
+                or not tags
+                or not all(isinstance(tag, str) and tag.strip() for tag in tags)):
+            errors.append(f"invalid_scenario_tags:{fixture_label}")
     return {"manifest_version": data.get("manifest_version"), "fixture_count": len(seen),
             "errors": errors, "status": "PASS" if not errors else "FAIL"}
 
