@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 import grpc
@@ -90,6 +91,44 @@ class IngestServiceTests(unittest.TestCase):
         failing_store = Store(failing=True)
         self.assertFalse(_delete_bundles(failing_store, [bundle]))
         self.assertEqual(len(failing_store.deleted), 2)
+
+    def test_bundle_cleanup_continues_after_first_bundle_delete_failure(self):
+        first = self.make_bundle()
+        second = self.make_bundle()
+        second = replace(
+            second,
+            document_version_id="v-second",
+            records=tuple(
+                replace(
+                    record,
+                    object_key=record.object_key.replace("/v-test/", "/v-second/"),
+                )
+                for record in second.records
+            ),
+            manifest=replace(
+                second.manifest,
+                object_key=second.manifest.object_key.replace(
+                    "/v-test/", "/v-second/"
+                ),
+            ),
+        )
+
+        class Store:
+            def __init__(self):
+                self.deleted = []
+                self.fail_once = True
+
+            def delete(self, key):
+                self.deleted.append(key)
+                if self.fail_once:
+                    self.fail_once = False
+                    raise RuntimeError("simulated first bundle delete failure")
+
+        store = Store()
+        self.assertFalse(_delete_bundles(store, [first, second]))
+        self.assertEqual(len(store.deleted), 4)
+        self.assertTrue(any("/v-test/" in key for key in store.deleted))
+        self.assertTrue(any("/v-second/" in key for key in store.deleted))
 
     def test_parse_failure_reports_incomplete_artifact_cleanup(self):
         class Store:
