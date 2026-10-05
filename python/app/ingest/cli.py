@@ -295,6 +295,18 @@ def main(argv: list[str] | None = None) -> int:
     for command in ("validate", "import"):
         cmd = sub.add_parser(command)
         cmd.add_argument("--manifest", type=Path, required=True)
+    bundle = sub.add_parser(
+        "bundle",
+        help="parse a validated manifest and store an atomic metadata-bound artifact bundle",
+    )
+    bundle.add_argument("--manifest", type=Path, required=True)
+    bundle.add_argument(
+        "--store-root",
+        type=Path,
+        required=True,
+        help="restricted filesystem object-store root; this command never uses OSS",
+    )
+    bundle.add_argument("--output", type=Path)
     status = sub.add_parser("status")
     status.add_argument("--dataset", required=True)
     search = sub.add_parser("index-search")
@@ -305,6 +317,28 @@ def main(argv: list[str] | None = None) -> int:
     search.add_argument("--role", default="viewer")
     search.add_argument("--business-date", default=None)
     args = parser.parse_args(argv)
+    if args.command == "bundle":
+        from app.ingest.bundles import BundleRunError, run_manifest_bundle
+        from app.storage import FilesystemObjectStore
+
+        output = args.output
+        try:
+            report = run_manifest_bundle(
+                args.manifest,
+                FilesystemObjectStore(args.store_root),
+                output=output,
+            )
+        except (BundleRunError, OSError, ValueError) as exc:
+            print(f"FAIL bundle: {exc}")
+            return 1
+        print(json.dumps({
+            "status": "PASS",
+            "dataset_id": report["dataset_id"],
+            "documents": report["summary"],
+            "output": str(output) if output else None,
+            "real_service_acceptance": False,
+        }, ensure_ascii=False, sort_keys=True))
+        return 0
     if args.command in {"validate", "import"}:
         result = validate_manifest(args.manifest)
         if not result.ok:
