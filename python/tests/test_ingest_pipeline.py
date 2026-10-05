@@ -61,6 +61,19 @@ def test_csv_shared_file_filters_rows_to_manifest_scope(tmp_path: Path):
     assert "sku: A" in elements[0].content
 
 
+def test_csv_bom_keeps_tenant_filtering_at_header_boundary(tmp_path: Path):
+    path = tmp_path / "products-bom.csv"
+    path.write_bytes(
+        b"\xef\xbb\xbftenant_id,shop_id,sku\n"
+        b"tenant-b,shop-a,OTHER\n"
+        b"tenant-a,shop-a,OWN\n"
+    )
+    elements = CSVParser().parse(path, document_id="products-a", version_id="v1", metadata=metadata())
+    assert len(elements) == 1
+    assert "sku: OWN" in elements[0].content
+    assert all("OTHER" not in element.content for element in elements)
+
+
 def test_adjacent_expansion_reapplies_all_scope_filters(tmp_path: Path):
     path = tmp_path / "long.md"
     path.write_text("目标商品" + "邻接正文" * 30, encoding="utf-8")

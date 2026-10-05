@@ -239,7 +239,11 @@ class MarkdownParser:
 class CSVParser:
     def parse(self, path: Path, *, document_id: str, version_id: str, metadata: dict[str, Any]) -> list[ParsedElement]:
         elements: list[ParsedElement] = []
-        with path.open("r", encoding="utf-8", newline="") as handle:
+        # ``utf-8-sig`` consumes an optional BOM only at the decoded stream
+        # boundary.  The uploaded bytes and their source hash remain
+        # unchanged, while tenant/shop headers still participate in scope
+        # filtering for files exported by spreadsheet tools.
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
             for row_number, row in enumerate(csv.DictReader(handle), 2):
                 values = [f"{key}: {value}" for key, value in row.items() if value not in (None, "")]
                 row_tenant = row.get("tenant_id")
