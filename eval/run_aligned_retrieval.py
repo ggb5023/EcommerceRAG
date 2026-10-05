@@ -79,7 +79,13 @@ def _metrics(rows: list[dict]) -> dict[str, float | None]:
 
 def _policy_refusal_expected(case: dict) -> bool:
     tags = set(case.get("tags", []))
-    return bool(tags & {"unauthorized", "unanswerable"})
+    if tags & {"unauthorized", "unanswerable", "revoked", "expired"}:
+        return True
+    # Some legacy synthetic cases encode a refusal in the expected answer
+    # point but predate the explicit policy tag.  Keep this narrow and
+    # deterministic so ordinary negative knowledge cases are not swallowed.
+    points = " ".join(point for point in case.get("expected_answer_points", []) if isinstance(point, str))
+    return any(marker in points for marker in ("拒绝", "撤销", "撤权", "不能继续", "无法", "不应"))
 
 
 def _acceptable_policy_refusal(case: dict, status: str) -> bool:
@@ -250,7 +256,7 @@ def main() -> int:
                 }
             )
             continue
-        ranked: list[tuple[int, str, dict]] = []
+        ranked_by_document: dict[str, tuple[int, dict]] = {}
         for doc_id in source_ids:
             document = corpus_by_id[doc_id]
             for chunk in document.get("chunks", []):
@@ -262,8 +268,12 @@ def main() -> int:
                     continue
                 score = len(query_tokens & tokens(chunk["content"]))
                 if score:
-                    ranked.append((score, doc_id, chunk))
-        ranked.sort(key=lambda value: (-value[0], value[2]["chunk_id"]))
+                    current = ranked_by_document.get(doc_id)
+                    candidate = (score, chunk)
+                    if current is None or (-score, chunk["chunk_id"]) < (-current[0], current[1]["chunk_id"]):
+                        ranked_by_document[doc_id] = candidate
+        ranked = [(score, doc_id, chunk) for doc_id, (score, chunk) in ranked_by_document.items()]
+        ranked.sort(key=lambda value: (-value[0], value[2]["chunk_id"], value[1]))
         top = ranked[:5]
         expected = set(source_ids)
         hit_positions = [index for index, (_, doc_id, _) in enumerate(top, 1) if doc_id in expected]

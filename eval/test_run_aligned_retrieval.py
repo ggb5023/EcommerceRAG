@@ -289,3 +289,42 @@ def test_expired_and_future_sources_are_distinguished(tmp_path: Path) -> None:
     assert expired["case_results"][0]["status"] == "EXPIRED_OR_REVOKED"
     assert future["case_results"][0]["status"] == "NOT_YET_EFFECTIVE"
     assert expired["status"] == future["status"] == "PASS"
+
+
+def test_revoked_answer_point_marks_expired_refusal_as_expected(tmp_path: Path) -> None:
+    report = _run(tmp_path, _policy_alignment(), case={**_policy_case(tags=["policy", "negative"]), "expected_answer_points": ["撤销版本不能继续使用"]}, chunk={
+        "chunk_id": "chunk-1", "content": "撤销版本不能继续使用", "tenant_id": "tenant-a", "shop_id": "shop-a",
+        "disclosure_class": "external_allowed", "effective_from": "2026-01-01", "effective_to": "2026-10-01",
+    })
+    assert report["case_results"][0]["status"] == "EXPIRED_OR_REVOKED"
+    assert report["case_results"][0]["refusal_match"] is True
+    assert report["status"] == "PASS"
+
+
+def test_document_ranking_deduplicates_chunks_before_ndcg(tmp_path: Path) -> None:
+    cases_path = tmp_path / "cases.jsonl"
+    cases_path.write_text(json.dumps({
+        "case_id": "case-1", "query": "蓝色 收纳箱", "expected_doc_ids": ["label-doc"],
+        "expected_answer_points": ["有资料支持"],
+        "authorization": {"tenant_id": "tenant-a", "shop_id": "shop-a", "role": "operator"},
+        "business_date": "2026-10-04",
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    corpus_path = tmp_path / "documents.jsonl"
+    corpus_path.write_text(json.dumps({
+        "document_id": "actual-doc-v1", "tenant_id": "tenant-a", "shop_id": "shop-a",
+        "chunks": [
+            {"chunk_id": "chunk-a", "content": "蓝色 收纳箱", "tenant_id": "tenant-a", "shop_id": "shop-a", "disclosure_class": "external_allowed", "effective_from": "2026-01-01", "effective_to": None},
+            {"chunk_id": "chunk-b", "content": "蓝色 收纳箱 规格", "tenant_id": "tenant-a", "shop_id": "shop-a", "disclosure_class": "external_allowed", "effective_from": "2026-01-01", "effective_to": None},
+        ],
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    alignment_path = tmp_path / "alignment.json"
+    alignment_path.write_text(json.dumps({
+        "status": "APPROVED", "real_service_acceptance": False,
+        "case_to_source_documents": {"case-1": {"label-doc": "actual-doc-v1"}},
+    }), encoding="utf-8")
+    output = tmp_path / "report.json"
+    subprocess.run([sys.executable, str(SCRIPT), "--cases", str(cases_path), "--corpus", str(corpus_path), "--alignment", str(alignment_path), "--output", str(output)], check=True)
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["status"] == "PASS"
+    assert report["case_results"][0]["result_document_ids"] == ["actual-doc-v1"]
+    assert report["metrics"]["ndcg_at_5"] == 1.0
