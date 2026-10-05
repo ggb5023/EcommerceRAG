@@ -15,9 +15,17 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_repository_registry_is_pending_and_valid():
     report = validate(ROOT / "data/web/source-registry-v1.json")
     assert report["status"] == "PASS", report
-    assert report["source_count"] == 2
+    assert report["source_count"] == 4
     assert report["active_count"] == 0
     assert report["real_service_acceptance"] is False
+    registry = json.loads((ROOT / "data/web/source-registry-v1.json").read_text(encoding="utf-8"))
+    assert {
+        source["source_id"] for source in registry["sources"]
+    } >= {
+        "raspberrypi-official-docs",
+        "shopify-developer-docs",
+        "woocommerce-official-docs",
+    }
 
 
 def test_active_source_requires_terms_robots_and_freshness(tmp_path: Path):

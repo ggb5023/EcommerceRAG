@@ -9,13 +9,81 @@
       "status": "pending_review",
       "source_kind": "manufacturer",
       "base_domains": ["datasheets.raspberrypi.com", "www.raspberrypi.com"],
-      "allowed_paths": ["/pico", "/rp2040", "/picow", "/rp2350", "/cm4", "/rpi4", "/rpi5", "/camera"],
+      "allowed_paths": ["/documentation", "/pico", "/rp2040", "/picow", "/rp2350", "/cm4", "/rpi4", "/rpi5", "/camera"],
       "denied_paths": ["/login", "/account", "/checkout"],
       "discovery_mode": "fixed_urls",
-      "fixed_urls": [],
+      "fixed_urls": ["https://www.raspberrypi.com/documentation/"],
       "terms_review": {
         "status": "pending",
         "review_url": "https://www.raspberrypi.com/documentation/",
+        "reviewed_at": null,
+        "reviewer": null,
+        "allowed_persistence": null,
+        "license_ref": null
+      },
+      "robots_policy": {
+        "required": true,
+        "status": "pending",
+        "checked_at": null,
+        "revision": null
+      },
+      "refresh_policy": {
+        "trigger": "manual",
+        "interval_hours": null,
+        "max_age_days": null,
+        "budget_requests": null
+      },
+      "content_policy": "pending_review",
+      "authorization": "pending",
+      "owner": "data_owner",
+      "policy_version": "source-policy-v1"
+    },
+    {
+      "source_id": "shopify-developer-docs",
+      "status": "pending_review",
+      "source_kind": "platform_help",
+      "base_domains": ["shopify.dev"],
+      "allowed_paths": ["/docs"],
+      "denied_paths": ["/admin", "/account", "/checkout"],
+      "discovery_mode": "fixed_urls",
+      "fixed_urls": ["https://shopify.dev/docs"],
+      "terms_review": {
+        "status": "pending",
+        "review_url": "https://shopify.dev/docs",
+        "reviewed_at": null,
+        "reviewer": null,
+        "allowed_persistence": null,
+        "license_ref": null
+      },
+      "robots_policy": {
+        "required": true,
+        "status": "pending",
+        "checked_at": null,
+        "revision": null
+      },
+      "refresh_policy": {
+        "trigger": "manual",
+        "interval_hours": null,
+        "max_age_days": null,
+        "budget_requests": null
+      },
+      "content_policy": "pending_review",
+      "authorization": "pending",
+      "owner": "data_owner",
+      "policy_version": "source-policy-v1"
+    },
+    {
+      "source_id": "woocommerce-official-docs",
+      "status": "pending_review",
+      "source_kind": "platform_help",
+      "base_domains": ["woocommerce.com"],
+      "allowed_paths": ["/documentation"],
+      "denied_paths": ["/my-account", "/checkout", "/cart"],
+      "discovery_mode": "fixed_urls",
+      "fixed_urls": ["https://woocommerce.com/documentation/"],
+      "terms_review": {
+        "status": "pending",
+        "review_url": "https://woocommerce.com/documentation/",
         "reviewed_at": null,
         "reviewer": null,
         "allowed_persistence": null,

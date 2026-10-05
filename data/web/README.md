@@ -2,7 +2,7 @@
 
 `source-registry-v1.json` 是当前唯一的网页来源策略入口。它只登记来源、域名/path、许可证与条款审阅、robots、刷新预算和保留策略，不包含网页正文。
 
-当前两个来源均为 `pending_review`，active 数量为 0；公网 crawler 为 `NOT_RUN`。Tavily 的独立脱敏 smoke 不能绕过来源注册，也不能把搜索结果升级为商品、政策、价格、库存、权限或客服真值。启用来源前必须完成条款/许可证、robots、域名与路径、预算、刷新、保留和责任人审阅，并通过：
+当前三个官方文档来源均为 `pending_review`，active 数量为 0；公网 crawler 为 `NOT_RUN`。首轮来源为 Raspberry Pi、Shopify Developer 和 WooCommerce 官方文档。Tavily 的独立脱敏 smoke 不能绕过来源注册，也不能把搜索结果升级为商品、政策、价格、库存、权限或客服真值。启用来源前必须完成条款/许可证、robots、域名与路径、预算、刷新、保留和责任人审阅，并通过：
 
 ```bash
 python3 scripts/validate_source_registry.py

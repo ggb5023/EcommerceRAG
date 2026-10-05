@@ -12,7 +12,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check-doc-baseline.py"
 HEAD = "a" * 40
 DOCS = {
     "HANDOFF.md": "# Handoff\n\n代码基线 HEAD：`" + HEAD + "`\n当前验收章节：§1\n当前工程状态矩阵.md\n",
-    "CODEX_GOAL持续开发计划.md": "# Goal\n\n代码基线 HEAD：`" + HEAD + "`\n当前工程状态矩阵.md §1 M1_PASS M2_SYNTHETIC_PASS M2_REAL_NOT_READY M3_SYNTHETIC_ADMIN_ONLY CONFIG_BLOCKED NOT_RUN 启动与基线复核 工程闭环稳定 M3 synthetic 管理与 worker 相邻回归 合成 M2 RAG 纵向链路 真实文档摄取与 MinerU 解析闭环 检索、Qwen Provider 与 pgvector 公开来源与 crawler 电商平台数据与真实身份适配 M3 生产管理与运行就绪 安全、容量、发布与持续治理\n",
+    "CODEX_GOAL持续开发计划.md": "# Goal\n\n代码基线 HEAD：`" + HEAD + "`\n当前工程状态矩阵.md §1 M1_PASS M2_SYNTHETIC_PASS M2_REAL_NOT_READY M3_SYNTHETIC_ADMIN_ONLY CONFIG_BLOCKED NOT_RUN P0：文档和状态同步 P1：阿里百炼 Provider 契约 P2：OSS 适配器 P3：受控 Crawler 来源 P4：统一解析与切片闭环 P5：合成 M2 纵向链路 P6：M3 合成管理回归 P7：真实输入前置门禁\n",
     "docs/README.md": "# Index\n",
     "docs/验证与验收.md": "## 1. 当前基线\n",
     "docs/当前工程状态矩阵.md": "当前 HEAD `" + HEAD + "` DESIGN IMPLEMENTED STATIC_PASS RUNTIME_PASS NOT_RUN BLOCKED CONFIG_BLOCKED M1_PASS M2_SYNTHETIC_PASS M2_REAL_NOT_READY M3_SYNTHETIC_ADMIN_ONLY PENDING_REVIEW\n",
