@@ -165,6 +165,7 @@ type artifactBinding struct {
 	RawObjectKey      string
 	ParsedObjectKey   string
 	ArtifactTypes     []string
+	Artifacts         []artifactRecordCanonical
 }
 
 type artifactRecordCanonical struct {
@@ -294,6 +295,7 @@ func validateArtifactBundle(document *ragv1.ParsedDocument) (*artifactBinding, e
 		RawObjectKey:      artifactKeys["raw"],
 		ParsedObjectKey:   artifactKeys["parsed"],
 		ArtifactTypes:     artifactTypes,
+		Artifacts:         records,
 	}, nil
 }
 
@@ -313,6 +315,7 @@ func artifactQualityJSON(document *ragv1.ParsedDocument, binding *artifactBindin
 			"manifest_sha256":         binding.ManifestSHA256,
 			"artifact_set_sha256":     binding.ArtifactSetSHA256,
 			"artifact_types":          binding.ArtifactTypes,
+			"artifacts":               binding.Artifacts,
 			"real_service_acceptance": false,
 		}
 	}

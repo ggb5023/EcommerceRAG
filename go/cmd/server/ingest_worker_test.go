@@ -216,6 +216,55 @@ func TestValidateArtifactBundleAcceptsCanonicalReference(t *testing.T) {
 	}
 }
 
+func TestArtifactQualityJSONIncludesCanonicalArtifactRecords(t *testing.T) {
+	document := artifactBoundDocument()
+	binding, err := validateArtifactBundle(document)
+	if err != nil {
+		t.Fatalf("valid artifact bundle rejected: %v", err)
+	}
+	qualityText, err := artifactQualityJSON(document, binding)
+	if err != nil {
+		t.Fatalf("artifact quality metadata could not be serialized: %v", err)
+	}
+	var quality map[string]any
+	if err := json.Unmarshal([]byte(qualityText), &quality); err != nil {
+		t.Fatalf("artifact quality metadata is invalid JSON: %v", err)
+	}
+	bundle, ok := quality["artifact_bundle"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifact bundle metadata missing: %#v", quality)
+	}
+	if accepted, ok := bundle["real_service_acceptance"].(bool); !ok || accepted {
+		t.Fatalf("artifact bundle must remain outside real service acceptance: %#v", bundle["real_service_acceptance"])
+	}
+	artifacts, ok := bundle["artifacts"].([]any)
+	if !ok || len(artifacts) != 4 {
+		t.Fatalf("expected four canonical artifact records, got %#v", bundle["artifacts"])
+	}
+	seen := make(map[string]bool, len(artifacts))
+	for _, value := range artifacts {
+		record, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("artifact record is not an object: %#v", value)
+		}
+		artifactType, _ := record["artifact_type"].(string)
+		objectKey, _ := record["object_key"].(string)
+		sha256Value, _ := record["sha256"].(string)
+		if artifactType == "" || objectKey == "" || !validSHA256Hex(sha256Value) || record["size_bytes"] == nil {
+			t.Fatalf("artifact record is incomplete: %#v", record)
+		}
+		if seen[artifactType] {
+			t.Fatalf("artifact type is duplicated in quality metadata: %s", artifactType)
+		}
+		seen[artifactType] = true
+	}
+	for _, artifactType := range []string{"raw", "parsed", "chunks", "parse-report"} {
+		if !seen[artifactType] {
+			t.Fatalf("artifact type missing from quality metadata: %s", artifactType)
+		}
+	}
+}
+
 func TestValidateArtifactBundleRejectsManifestHashMismatch(t *testing.T) {
 	document := artifactBoundDocument()
 	document.ArtifactBundle.ManifestObjectKey = strings.Replace(document.ArtifactBundle.ManifestObjectKey,
