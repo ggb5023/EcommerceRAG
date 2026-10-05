@@ -17,8 +17,21 @@ from scripts.validate_source_fixtures import safe_fixture_path
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
 
 
+def load_manifest(root: Path) -> dict:
+    """Read only a well-formed fixture manifest before parsing any input."""
+    try:
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"manifest_invalid:{type(exc).__name__}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest_not_object")
+    if not isinstance(manifest.get("fixtures"), list):
+        raise ValueError("fixtures_must_be_array")
+    return manifest
+
+
 def run(root: Path) -> dict:
-    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    manifest = load_manifest(root)
     reports = []
     for index, item in enumerate(manifest.get("fixtures", [])):
         if not isinstance(item, dict):
@@ -101,12 +114,23 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    report = run(args.root)
+    try:
+        report = run(args.root)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        report = {
+            "report_version": "source-fixtures-parse-v1",
+            "root": str(args.root),
+            "real_service_acceptance": False,
+            "status": "FAIL",
+            "error_code": str(exc),
+            "reports": [],
+            "summary": {"fixtures": 0, "passed": 0, "expected_failures": 0, "mismatches": 0},
+        }
     output = args.output or args.root / "reports" / "parse-report.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(output), **report["summary"]}))
-    return 0 if report["summary"]["mismatches"] == 0 else 1
+    return 0 if report.get("status") != "FAIL" and report["summary"]["mismatches"] == 0 else 1
 
 
 if __name__ == "__main__":
