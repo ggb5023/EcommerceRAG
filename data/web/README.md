@@ -6,6 +6,9 @@
 
 ```bash
 python3 scripts/validate_source_registry.py
+python3 scripts/audit_crawler_sources.py
 ```
+
+`validate_source_registry.py` 校验来源结构和 active 门禁；`audit_crawler_sources.py` 进一步校验官方来源的页数/字节预算、允许内容类型和待审保留策略。后者为只读离线审计，输出 `network_requests=0`、官方来源数量和 `PENDING_REVIEW` 发布门禁，不请求 robots、DNS、HTTP 或 Tavily。两个检查通过都不等于来源许可已批准。
 
 原始网页快照只能存放在仓外受限目录，不能提交 Git、写入公开构建产物或进入 M1 客服链路。当前公开状态以本注册表和 `eval/README.md` 为准；私有运行证据由服务器文档维护。
