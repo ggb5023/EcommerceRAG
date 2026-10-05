@@ -12,6 +12,7 @@ while IFS= read -r -d '' script; do bash -n "$script"; done < <(find scripts doc
 shellcheck -S warning scripts/*.sh docker/db/*.sh docker/db/init/*.sh
 (cd go; go test -p 2 ./...; go vet ./...)
 (cd python; uv sync --frozen; uv run ruff check app; uv run python -c 'from app.providers.contracts import EmbeddingResult; from app import server')
+(cd python; uv run python ../scripts/provider-smoke.py --response-fixture ../scripts/provider-smoke-fixture.json)
 (cd python; uv run python ../scripts/artifact-storage-smoke.py)
 buf lint
 buf build -o /dev/null
