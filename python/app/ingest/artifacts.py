@@ -11,9 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from app.ingest.pipeline import Chunk, ParsedElement
 from app.storage import ObjectMetadata, ObjectStore, ObjectStoreError, object_key
 
 _ARTIFACT_MANIFEST_TYPE = "artifact-manifest"
@@ -100,6 +101,110 @@ def _validate_input(item: ArtifactInput) -> None:
         raise ArtifactBundleError("artifact data must not be empty")
     if not isinstance(item.content_type, str) or not item.content_type.strip():
         raise ArtifactBundleError("artifact content type is invalid")
+
+
+def _json_bytes(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ArtifactBundleError("artifact metadata is not JSON serializable") from exc
+
+
+def _element_record(element: ParsedElement) -> dict[str, object]:
+    return {
+        "document_id": element.document_id,
+        "document_version_id": element.document_version_id,
+        "type": element.element_type,
+        "text": element.content,
+        "text_level": element.text_level,
+        "page_no": element.page_no,
+        "heading_path": list(element.heading),
+        "table_body": element.table_body,
+        "table_caption": element.table_caption,
+        "image_refs": list(element.image_refs),
+        "bbox": element.bbox,
+        "source_position": element.source_position,
+        "warning": element.warning,
+        "metadata": element.metadata,
+    }
+
+
+def _chunk_record(chunk: Chunk) -> dict[str, object]:
+    return {
+        "document_id": chunk.document_id,
+        "document_version_id": chunk.version_id,
+        "chunk_id": chunk.chunk_id,
+        "title": chunk.title,
+        "heading_path": list(chunk.heading),
+        "text": chunk.content,
+        "source_ref": chunk.source_ref,
+        "tenant_id": chunk.tenant_id,
+        "shop_id": chunk.shop_id,
+        "disclosure_class": chunk.disclosure_class,
+        "effective_from": chunk.effective_from,
+        "effective_to": chunk.effective_to,
+        "section_seq": chunk.section_seq,
+        "chunk_index": chunk.chunk_index,
+        "split_reason": chunk.split_reason,
+        "chunk_hash": chunk.chunk_hash,
+        "metadata": chunk.metadata,
+        "source_position": chunk.source_position,
+        "chunk_rule_version": chunk.rule_version,
+        "content_type": chunk.content_type,
+    }
+
+
+def _jsonl(records: Iterable[Mapping[str, object]]) -> bytes:
+    return b"".join(_json_bytes(dict(record)) + b"\n" for record in records)
+
+
+def build_ingestion_artifacts(
+    *,
+    raw: bytes,
+    elements: Iterable[ParsedElement],
+    chunks: Iterable[Chunk],
+    parse_report: Mapping[str, object],
+) -> tuple[ArtifactInput, ...]:
+    """Serialize a parsed document into the shared artifact bundle contract.
+
+    Parsed elements and chunks are emitted as deterministic JSONL so local
+    parsers and MinerU adapters share the same field names and ordering. The
+    raw document remains a separate immutable artifact; the report is caller
+    supplied metadata and must not contain customer or source document content.
+    """
+
+    if not isinstance(raw, bytes) or not raw:
+        raise ArtifactBundleError("raw artifact must be non-empty bytes")
+    element_rows = tuple(_element_record(element) for element in elements)
+    chunk_rows = tuple(_chunk_record(chunk) for chunk in chunks)
+    if not element_rows:
+        raise ArtifactBundleError("parsed artifact must contain an element")
+    if not chunk_rows:
+        raise ArtifactBundleError("chunk artifact must contain a chunk")
+    versions = {
+        str(row["document_version_id"])
+        for row in (*element_rows, *chunk_rows)
+        if row.get("document_version_id")
+    }
+    if len(versions) > 1:
+        raise ArtifactBundleError("parsed artifacts contain multiple document versions")
+    if not isinstance(parse_report, Mapping):
+        raise ArtifactBundleError("parse report must be a mapping")
+    report = dict(parse_report)
+    report.setdefault("artifact_schema_version", "structured-v2-artifact-v1")
+    report.setdefault("element_count", len(element_rows))
+    report.setdefault("chunk_count", len(chunk_rows))
+    return (
+        ArtifactInput("raw", raw, "application/octet-stream"),
+        ArtifactInput("parsed", _jsonl(element_rows), "application/jsonl"),
+        ArtifactInput("chunks", _jsonl(chunk_rows), "application/jsonl"),
+        ArtifactInput("parse-report", _json_bytes(report), "application/json"),
+    )
 
 
 def _record_from_metadata(
