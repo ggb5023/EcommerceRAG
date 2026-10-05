@@ -304,36 +304,67 @@ class DOCXParser:
     def parse(self, path: Path, *, document_id: str, version_id: str, metadata: dict[str, Any]) -> list[ParsedElement]:
         try:
             from docx import Document
+            from docx.table import Table
+            from docx.text.paragraph import Paragraph
         except ImportError:
             return self._parse_minimal_docx(path, document_id=document_id, version_id=version_id, metadata=metadata)
         document = Document(path)
         elements: list[ParsedElement] = []
         heading: list[str] = []
-        for index, paragraph in enumerate(document.paragraphs, 1):
-            content = paragraph.text.strip()
-            if not content:
-                continue
-            style = paragraph.style.name.lower() if paragraph.style else ""
-            match = re.search(r"heading\s*(\d+)", style)
-            if match:
-                level = int(match.group(1))
-                del heading[level - 1:]
-                heading.append(content)
-                elements.append(_common(
-                    document_id, version_id, metadata, content, content,
-                    {"line_start": index, "line_end": index},
-                    heading=tuple(heading), element_type="heading", text_level=level,
-                ))
-            else:
-                elements.append(_common(document_id, version_id, metadata, metadata.get("title", document_id), content,
-                                        {"line_start": index, "line_end": index}, heading=tuple(heading)))
-        for table_index, table in enumerate(document.tables, 1):
-            rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
-            if rows:
-                elements.append(_common(document_id, version_id, metadata, metadata.get("title", document_id),
-                                        "\n".join(rows), {"line_start": None, "line_end": None, "table": table_index},
-                                        heading=tuple(heading), element_type="table", table_body=[row.split(" | ") for row in rows]))
+        table_index = 0
+        for block_index, child in enumerate(document.element.body.iterchildren(), 1):
+            tag = child.tag.rsplit("}", 1)[-1]
+            if tag == "p":
+                paragraph = Paragraph(child, document)
+                content = paragraph.text.strip()
+                if not content:
+                    continue
+                style = paragraph.style.name if paragraph.style else ""
+                level = self._heading_level(style)
+                position = {"block_index": block_index}
+                if level is not None:
+                    del heading[level - 1:]
+                    heading.append(content)
+                    elements.append(_common(
+                        document_id, version_id, metadata, content, content, position,
+                        heading=tuple(heading), element_type="heading", text_level=level,
+                    ))
+                else:
+                    elements.append(_common(document_id, version_id, metadata,
+                                            metadata.get("title", document_id), content,
+                                            position, heading=tuple(heading)))
+            elif tag == "tbl":
+                table_index += 1
+                element = self._table_element(
+                    Table(child, document), document_id=document_id,
+                    version_id=version_id, metadata=metadata,
+                    heading=tuple(heading), table_index=table_index,
+                    block_index=block_index,
+                )
+                if element is not None:
+                    elements.append(element)
         return elements
+
+    @staticmethod
+    def _heading_level(style: str) -> int | None:
+        match = re.search(r"heading\s*(\d+)", style.lower())
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _table_element(table: Any, *, document_id: str, version_id: str,
+                       metadata: dict[str, Any], heading: tuple[str, ...],
+                       table_index: int, block_index: int) -> ParsedElement | None:
+        rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+        if not rows:
+            return None
+        repeated_header = bool(rows[0]) and any(row == rows[0] for row in rows[1:])
+        return _common(
+            document_id, version_id, metadata, metadata.get("title", document_id),
+            "\n".join(" | ".join(row) for row in rows),
+            {"block_index": block_index, "table": table_index}, heading=heading,
+            element_type="table", table_body=rows,
+            warning="repeated_table_header" if repeated_header else None,
+        )
 
     @staticmethod
     def _parse_minimal_docx(path: Path, *, document_id: str, version_id: str,
@@ -345,20 +376,47 @@ class DOCXParser:
         with ZipFile(path) as archive:
             root = ElementTree.fromstring(archive.read("word/document.xml"))
         elements: list[ParsedElement] = []
-        for index, paragraph in enumerate(root.findall(".//w:body/w:p", ns), 1):
-            text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns)).strip()
-            if text:
-                elements.append(_common(document_id, version_id, metadata, metadata.get("title", document_id), text,
-                                        {"line_start": index, "line_end": index}))
-        for table_index, table in enumerate(root.findall(".//w:body/w:tbl", ns), 1):
-            rows = []
-            for row in table.findall("./w:tr", ns):
-                rows.append(" | ".join("".join(node.text or "" for node in cell.findall(".//w:t", ns))
-                                      for cell in row.findall("./w:tc", ns)))
-            if rows:
-                elements.append(_common(document_id, version_id, metadata, metadata.get("title", document_id),
-                                        "\n".join(rows), {"line_start": None, "line_end": None, "table": table_index},
-                                        element_type="table", table_body=[row.split(" | ") for row in rows]))
+        heading: list[str] = []
+        table_index = 0
+        body = root.find("./w:body", ns)
+        if body is None:
+            return elements
+        for block_index, block in enumerate(list(body), 1):
+            tag = block.tag.rsplit("}", 1)[-1]
+            if tag == "p":
+                text = "".join(node.text or "" for node in block.findall(".//w:t", ns)).strip()
+                if not text:
+                    continue
+                style_node = block.find("./w:pPr/w:pStyle", ns)
+                style = style_node.attrib.get("{" + ns["w"] + "}val", "") if style_node is not None else ""
+                level = DOCXParser._heading_level(style)
+                if level is not None:
+                    del heading[level - 1:]
+                    heading.append(text)
+                    elements.append(_common(
+                        document_id, version_id, metadata, text, text,
+                        {"block_index": block_index}, heading=tuple(heading),
+                        element_type="heading", text_level=level,
+                    ))
+                else:
+                    elements.append(_common(
+                        document_id, version_id, metadata, metadata.get("title", document_id), text,
+                        {"block_index": block_index}, heading=tuple(heading),
+                    ))
+            elif tag == "tbl":
+                table_index += 1
+                rows = [["".join(node.text or "" for node in cell.findall(".//w:t", ns))
+                         for cell in row.findall("./w:tc", ns)]
+                        for row in block.findall("./w:tr", ns)]
+                if rows:
+                    repeated_header = bool(rows[0]) and any(row == rows[0] for row in rows[1:])
+                    elements.append(_common(
+                        document_id, version_id, metadata, metadata.get("title", document_id),
+                        "\n".join(" | ".join(row) for row in rows),
+                        {"block_index": block_index, "table": table_index}, heading=tuple(heading),
+                        element_type="table", table_body=rows,
+                        warning="repeated_table_header" if repeated_header else None,
+                    ))
         return elements
 
 

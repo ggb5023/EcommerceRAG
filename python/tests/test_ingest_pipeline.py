@@ -48,6 +48,25 @@ def test_docx_headings_paragraphs_and_table(tmp_path: Path):
     assert any(element.element_type == "table" and "480ml" in element.content for element in elements)
 
 
+def test_docx_fallback_preserves_block_order_heading_path_and_repeated_header_warning(tmp_path: Path):
+    path = tmp_path / "ordered.docx"
+    xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>规格</w:t></w:r></w:p>
+    <w:tbl><w:tr><w:tc><w:p><w:r><w:t>型号</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>值</w:t></w:r></w:p></w:tc></w:tr>
+    <w:tr><w:tc><w:p><w:r><w:t>型号</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>值</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+    <w:p><w:r><w:t>表格之后的说明。</w:t></w:r></w:p>
+    </w:body></w:document>'''
+    with ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", xml)
+    elements = DOCXParser().parse(path, document_id="doc", version_id="v1", metadata=metadata())
+    assert [element.element_type for element in elements] == ["heading", "table", "text"]
+    assert elements[1].heading == ("规格",)
+    assert elements[1].warning == "repeated_table_header"
+    assert elements[0].source_position["block_index"] < elements[1].source_position["block_index"]
+    assert elements[1].source_position["block_index"] < elements[2].source_position["block_index"]
+
+
 def test_csv_shared_file_filters_rows_to_manifest_scope(tmp_path: Path):
     path = tmp_path / "products.csv"
     path.write_text(
