@@ -98,6 +98,9 @@ def test_table_without_text_is_linearized_and_chunked(tmp_path: Path):
     chunk = json.loads((tmp_path / "output" / "chunks" / "table-doc-v1.jsonl").read_text().splitlines()[0])
     assert "型号 | 容量" in chunk["content"]
     assert chunk["source_position"]["page_no"] == 2
+    assert chunk["chunk_index"] == 0
+    assert chunk["section_chunk_index"] == 0
+    assert chunk["section_seq"] == 1
 
 
 def test_process_accepts_mineru_uuid_prefixed_content_list(tmp_path: Path):

@@ -216,12 +216,18 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
     _write_staged_atomic(staging_root, parsed_dir / "full.md", "\n\n".join(lines) + "\n")
     chunk_path = chunks_dir / "chunks.jsonl"
     chunk_lines = []
-    for chunk in chunks:
+    for chunk_index, chunk in enumerate(chunks):
         chunk_lines.append(json.dumps({
                 "document_id": chunk.document_id,
                 "document_version_id": chunk.version_id,
                 "chunk_id": chunk.chunk_id,
+                "title": chunk.title,
+                "heading_path": list(chunk.heading),
                 "content": chunk.content,
+                "source_ref": chunk.source_ref,
+                "section_seq": chunk.section_seq,
+                "section_chunk_index": chunk.chunk_index,
+                "chunk_index": chunk_index,
                 "source_position": chunk.source_position,
                 "split_reason": chunk.split_reason,
                 "chunk_hash": chunk.chunk_hash,

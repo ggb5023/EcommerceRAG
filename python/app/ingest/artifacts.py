@@ -134,7 +134,7 @@ def _element_record(element: ParsedElement) -> dict[str, object]:
     }
 
 
-def _chunk_record(chunk: Chunk) -> dict[str, object]:
+def _chunk_record(chunk: Chunk, *, chunk_index: int) -> dict[str, object]:
     return {
         "document_id": chunk.document_id,
         "document_version_id": chunk.version_id,
@@ -149,7 +149,11 @@ def _chunk_record(chunk: Chunk) -> dict[str, object]:
         "effective_from": chunk.effective_from,
         "effective_to": chunk.effective_to,
         "section_seq": chunk.section_seq,
-        "chunk_index": chunk.chunk_index,
+        # ``Chunk.chunk_index`` is the section-local index used by adjacent
+        # retrieval.  Artifact JSON carries both identities explicitly so a
+        # later reader cannot confuse it with the version-global index.
+        "section_chunk_index": chunk.chunk_index,
+        "chunk_index": chunk_index,
         "split_reason": chunk.split_reason,
         "chunk_hash": chunk.chunk_hash,
         "metadata": chunk.metadata,
@@ -181,7 +185,8 @@ def build_ingestion_artifacts(
     if not isinstance(raw, bytes) or not raw:
         raise ArtifactBundleError("raw artifact must be non-empty bytes")
     element_rows = tuple(_element_record(element) for element in elements)
-    chunk_rows = tuple(_chunk_record(chunk) for chunk in chunks)
+    chunk_rows = tuple(_chunk_record(chunk, chunk_index=index)
+                       for index, chunk in enumerate(chunks))
     if not element_rows:
         raise ArtifactBundleError("parsed artifact must contain an element")
     if not chunk_rows:

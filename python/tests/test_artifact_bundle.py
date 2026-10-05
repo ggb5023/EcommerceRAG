@@ -92,6 +92,9 @@ class ArtifactBundleTests(unittest.TestCase):
             self.assertTrue(chunk_rows)
             self.assertIn("source_position", parsed_rows[0])
             self.assertIn("chunk_hash", chunk_rows[0])
+            self.assertEqual([row["chunk_index"] for row in chunk_rows], list(range(len(chunk_rows))))
+            self.assertTrue(all("section_chunk_index" in row for row in chunk_rows))
+            self.assertTrue(all(row["section_chunk_index"] >= 0 for row in chunk_rows))
             store = FilesystemObjectStore(directory + "/objects")
             bundle = store_artifact_bundle(
                 store,
