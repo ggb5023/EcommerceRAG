@@ -4,7 +4,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 MODULE_PATH = Path(__file__).with_name("run_mock_retrieval.py")
 SPEC = importlib.util.spec_from_file_location("run_mock_retrieval", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -126,7 +125,12 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory) / "gate.json"
-            manifest.write_text(json.dumps({"requirements": requirements}))
+            manifest.write_text(json.dumps({
+                "gate_version": MODULE.GATE_VERSION,
+                "status": "READY",
+                "real_service_acceptance": False,
+                "requirements": requirements,
+            }))
             gate, manifest_sha = MODULE.m2_gate_status(manifest)
         self.assertEqual(gate["status"], "READY")
         self.assertFalse(gate["real_service_acceptance"])
@@ -139,6 +143,46 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
         self.assertEqual(len(gate["missing"]), 7)
         self.assertTrue(manifest_sha)
         self.assertFalse(gate["real_service_acceptance"])
+
+    def test_gate_manifest_rejects_version_status_and_unknown_fields(self):
+        requirements = {
+            key: {"ready": False, "owner": owner, "evidence": evidence}
+            for key, (owner, evidence) in MODULE.GATE_REQUIREMENTS.items()
+        }
+        base = {
+            "gate_version": MODULE.GATE_VERSION,
+            "status": "BLOCKED",
+            "real_service_acceptance": False,
+            "requirements": requirements,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invalid_version = root / "invalid-version.json"
+            invalid_version.write_text(json.dumps({**base, "gate_version": "old"}))
+            with self.assertRaisesRegex(ValueError, "version"):
+                MODULE.m2_gate_status(invalid_version)
+
+            invalid_status = root / "invalid-status.json"
+            invalid_status.write_text(json.dumps({**base, "status": "READY"}))
+            with self.assertRaisesRegex(ValueError, "status"):
+                MODULE.m2_gate_status(invalid_status)
+
+            unknown_requirement = root / "unknown-requirement.json"
+            unknown_requirement.write_text(json.dumps({
+                **base,
+                "requirements": {**requirements, "future_requirement": {
+                    "ready": False, "owner": "future", "evidence": "future"
+                }},
+            }))
+            with self.assertRaisesRegex(ValueError, "unknown requirement"):
+                MODULE.m2_gate_status(unknown_requirement)
+
+            claimed_acceptance = root / "claimed-acceptance.json"
+            claimed_acceptance.write_text(json.dumps({
+                **base, "real_service_acceptance": True,
+            }))
+            with self.assertRaisesRegex(ValueError, "real service acceptance"):
+                MODULE.m2_gate_status(claimed_acceptance)
 
     def test_report_hash_ignores_timestamp(self):
         first = {"run": {"started_at": "2026-01-01T00:00:00Z"}, "results": {"count": 1}}

@@ -8,7 +8,6 @@ import hashlib
 import json
 from pathlib import Path
 
-
 GATE_REQUIREMENTS = {
     "identity_roles_revocation": ("identity_owner", "identity source, role catalog, revocation SLA"),
     "tenant_shop_mapping": ("business_owner", "approved tenant/shop mapping"),
@@ -18,6 +17,8 @@ GATE_REQUIREMENTS = {
     "provider_embedding_quota_usage_request_id": ("ai_cloud_owner", "1024 dimension, quota, usage and request ID contract"),
     "material_versions_license_redaction": ("data_owner", "material versions, licenses and redaction rules"),
 }
+GATE_VERSION = "m2-external-input-gate-v1"
+GATE_STATUSES = {"BLOCKED", "READY"}
 
 
 def load_cases(path: Path, expected_sha: str | None) -> list[dict]:
@@ -102,18 +103,29 @@ def m2_gate_status(path: Path | None = None) -> tuple[dict[str, object], str | N
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("requirements"), dict):
             raise ValueError("gate manifest must contain a requirements object")
+        if payload.get("gate_version") != GATE_VERSION:
+            raise ValueError("gate manifest version is unsupported")
+        if payload.get("real_service_acceptance") is not False:
+            raise ValueError("gate manifest cannot claim real service acceptance")
         supplied = payload["requirements"]
+        unknown = sorted(set(supplied) - set(GATE_REQUIREMENTS))
+        if unknown:
+            raise ValueError(f"gate manifest contains unknown requirement: {unknown[0]}")
         for key, (owner, evidence) in GATE_REQUIREMENTS.items():
             row = supplied.get(key)
             if not isinstance(row, dict):
-                raise ValueError(f"gate manifest missing requirement: {key}")
+                raise TypeError(f"gate manifest missing requirement: {key}")
             if row.get("owner") != owner or row.get("evidence") != evidence:
                 raise ValueError(f"gate manifest owner/evidence mismatch: {key}")
             if not isinstance(row.get("ready"), bool):
-                raise ValueError(f"gate manifest ready must be boolean: {key}")
+                raise TypeError(f"gate manifest ready must be boolean: {key}")
             requirements[key]["ready"] = row["ready"]
         manifest_sha = file_sha256(path)
     status = "READY" if all(row["ready"] for row in requirements.values()) else "BLOCKED"
+    if path is not None and payload.get("status") not in GATE_STATUSES:
+        raise ValueError("gate manifest status is unsupported")
+    if path is not None and payload["status"] != status:
+        raise ValueError("gate manifest status does not match requirements")
     return {
         "status": status,
         "real_service_acceptance": False,
