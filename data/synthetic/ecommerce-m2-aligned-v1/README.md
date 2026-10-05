@@ -5,11 +5,11 @@ M2 retrieval baseline. It is not merchant truth, customer content, a
 production policy, or real-time business data. All documents are marked
 `synthetic`, `provisional`, and `internal-generated`.
 
-Current status: the source corpus and mapping proposal are implemented, but
-the aligned review is still `PENDING_REVIEW` because `syn-005` needs evidence
-revision. Aligned retrieval remains `NOT_RUN` with null metrics until the
-controlled approval gate is satisfied. This corpus does not change the
-immutable `synthetic-m2-v1` 60-case baseline.
+Current controlled status: alignment revision-1 covers all 60 cases and
+is approved for this synthetic source corpus. Its validation and
+deterministic retrieval reports are stored outside the repository;
+metrics remain synthetic-only and do not represent real-service
+acceptance. Earlier pending proposals are historical artifacts.
 
 The `expected_doc_id` field in `manifest.yaml` is a review aid only;
 retrieval runs require the separate explicit alignment mapping under

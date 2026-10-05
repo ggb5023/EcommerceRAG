@@ -8,6 +8,13 @@ for a separate product retrieval track are listed in
 `McAuley-Lab/Amazon-Reviews-2023` dataset distributed through Hugging Face.
 They are not part of the 60-case business-policy truth set.
 
+Current aligned synthetic status is revision-1: all 60 source mappings have
+been reviewed and approved for this synthetic corpus, validation is `PASS`, and
+the deterministic retrieval report is `RUNTIME_PASS`. The reports remain
+synthetic-only and carry `real_service_acceptance=false`; this does not change
+the immutable 60-case input or claim real merchant, model, or customer-service
+quality.
+
 `validate_public_sources.py` validates this manifest locally and without
 network access. A source may remain selected while its `revision`, dataset
 card/source terms, license, download date, and SHA-256 are pending. The
@@ -106,11 +113,12 @@ tenant/shop scope, and effective-date fields. It reports
 `PASS`, `PENDING_REVIEW`, or `FAIL` and never changes `alignment.json`, approves
 a mapping, copies case text into the corpus, or calculates retrieval metrics.
 The independent `ecommerce-m2-aligned-v1` corpus contains 37 synthetic,
-provisional documents and a 60-case review-only proposal. Its proposal and
-validation reports are kept outside the repository under
-`/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned-provisional/`; the
-proposal remains `PENDING_REVIEW` until a responsible reviewer confirms each
-source mapping.
+provisional documents. Its proposal and review history are kept outside the
+repository under
+`/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned-provisional/`. The current
+controlled artifacts are `alignment-revision-1.json`, its `PASS` validation
+report, and its deterministic retrieval report; earlier pending proposals are
+retained only as historical evidence.
 
 `alignment_policy.py` is the shared disclosure and effective-date policy
 check. Each source chunk must declare `external_allowed`, `internal_only`, or
@@ -139,8 +147,9 @@ revised evaluation input must receive a new version and SHA-256.
 `PENDING_REVIEW` proposal, an exact proposal hash in the review checklist,
 zero `pending`/`needs_revision`/`rejected` rows, and unchanged evidence fields.
 Only `--approve` writes a new artifact, atomically and without overwriting an
-existing file. It refuses the current provisional 59/1 review and never
-modifies `alignment.json` or the immutable evaluation input.
+existing file. It refuses any checklist with unresolved rows and never
+modifies `alignment.json` or the immutable evaluation input. The historical
+provisional 59/1 review is not the current baseline.
 Authorization fields are checked for tenant, shop, and role completeness;
 unauthorized cases must retain a target evidence/document reference. The
 synthetic set models an unauthorized request with a normal operator context,
