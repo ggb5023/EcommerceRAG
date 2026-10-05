@@ -12,7 +12,11 @@ from pathlib import Path, PurePosixPath
 import grpc
 import yaml
 
-from app.ingest.artifacts import ArtifactBundle, build_ingestion_artifacts, store_artifact_bundle
+from app.ingest.artifacts import (
+    ArtifactBundle,
+    build_ingestion_artifacts,
+    store_artifact_bundle,
+)
 from app.ingest.pipeline import chunk_elements_v2, parser_for
 from app.storage import FilesystemObjectStore, ObjectStore
 from rag.v1 import rag_pb2, rag_pb2_grpc
@@ -52,7 +56,7 @@ def _delete_bundles(store: ObjectStore | None, bundles: list[ArtifactBundle]) ->
         for record in reversed(bundle.all_records):
             try:
                 store.delete(record.object_key)
-            except Exception:  # noqa: BLE001 - abort path must stay redacted
+            except Exception:  # noqa: BLE001, S110 - abort path must stay redacted
                 pass
 
 
