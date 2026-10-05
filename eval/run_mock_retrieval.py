@@ -19,6 +19,8 @@ GATE_REQUIREMENTS = {
 }
 GATE_VERSION = "m2-external-input-gate-v1"
 GATE_STATUSES = {"BLOCKED", "READY"}
+GATE_FIELDS = {"gate_version", "status", "real_service_acceptance", "requirements"}
+GATE_REQUIREMENT_FIELDS = {"ready", "owner", "evidence"}
 
 
 def load_cases(path: Path, expected_sha: str | None) -> list[dict]:
@@ -103,6 +105,9 @@ def m2_gate_status(path: Path | None = None) -> tuple[dict[str, object], str | N
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or not isinstance(payload.get("requirements"), dict):
             raise ValueError("gate manifest must contain a requirements object")
+        unknown_fields = sorted(set(payload) - GATE_FIELDS)
+        if unknown_fields:
+            raise ValueError(f"gate manifest contains unknown field: {unknown_fields[0]}")
         if payload.get("gate_version") != GATE_VERSION:
             raise ValueError("gate manifest version is unsupported")
         if payload.get("real_service_acceptance") is not False:
@@ -115,6 +120,11 @@ def m2_gate_status(path: Path | None = None) -> tuple[dict[str, object], str | N
             row = supplied.get(key)
             if not isinstance(row, dict):
                 raise TypeError(f"gate manifest missing requirement: {key}")
+            unknown_row_fields = sorted(set(row) - GATE_REQUIREMENT_FIELDS)
+            if unknown_row_fields:
+                raise ValueError(
+                    f"gate manifest contains unknown field in {key}: {unknown_row_fields[0]}"
+                )
             if row.get("owner") != owner or row.get("evidence") != evidence:
                 raise ValueError(f"gate manifest owner/evidence mismatch: {key}")
             if not isinstance(row.get("ready"), bool):

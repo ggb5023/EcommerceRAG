@@ -91,6 +91,11 @@ currently `ready=false`; it records the accountable role and required evidence
 without inventing an identity source, merchant authorization, Provider
 credential, or license. Passing the machine check with this manifest reports
 `m2_gate.status=BLOCKED` and never changes `real_service_acceptance`.
+The manifest uses a strict versioned schema: unknown root fields and unknown
+fields inside a requirement are rejected, so credentials, endpoints, or
+unreviewed readiness metadata cannot be smuggled into the responsibility
+record. Only the declared `ready`, `owner`, and `evidence` fields are accepted
+for each requirement.
 The optional document-ID fixture measures document presence only: this tool
 does not execute Search or Generate, so those values are not query retrieval
 recall or runtime answer quality. The current demo corpus uses different IDs

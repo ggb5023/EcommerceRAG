@@ -177,6 +177,23 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unknown requirement"):
                 MODULE.m2_gate_status(unknown_requirement)
 
+            unknown_root_field = root / "unknown-root-field.json"
+            unknown_root_field.write_text(json.dumps({**base, "provider_api_key": "must-not-be-recorded"}))
+            with self.assertRaisesRegex(ValueError, "unknown field"):
+                MODULE.m2_gate_status(unknown_root_field)
+
+            unknown_requirement_field = root / "unknown-requirement-field.json"
+            requirement_rows = {
+                **requirements,
+                "identity_roles_revocation": {
+                    **requirements["identity_roles_revocation"],
+                    "evidence_path": "/etc/ecommerce-rag/secret",
+                },
+            }
+            unknown_requirement_field.write_text(json.dumps({**base, "requirements": requirement_rows}))
+            with self.assertRaisesRegex(ValueError, "unknown field in identity_roles_revocation"):
+                MODULE.m2_gate_status(unknown_requirement_field)
+
             claimed_acceptance = root / "claimed-acceptance.json"
             claimed_acceptance.write_text(json.dumps({
                 **base, "real_service_acceptance": True,
