@@ -15,6 +15,8 @@ if [[ ! -r "$env_file" ]]; then
 fi
 
 set -a
+# The path is an operator-controlled root-only file, never repository input.
+# shellcheck disable=SC1090
 source "$env_file"
 set +a
 : "${GRPC_ADDR:?GRPC_ADDR is required}"
