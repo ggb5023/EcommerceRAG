@@ -257,3 +257,23 @@ func TestValidateArtifactBundleRejectsUnsafeObjectKey(t *testing.T) {
 		t.Fatal("expected unsafe artifact object key to fail")
 	}
 }
+
+func TestValidateArtifactBundleRejectsCrossVersionOrTypeBinding(t *testing.T) {
+	document := artifactBoundDocument()
+	document.ArtifactBundle.Artifacts[0].ObjectKey = strings.Replace(
+		document.ArtifactBundle.Artifacts[0].ObjectKey,
+		"v-0123456789abcdef0123", "v-aaaaaaaaaaaaaaaaaaaa", 1,
+	)
+	if _, err := validateArtifactBundle(document); err == nil {
+		t.Fatal("expected cross-version artifact object key to fail")
+	}
+
+	document = artifactBoundDocument()
+	document.ArtifactBundle.Artifacts[0].ObjectKey = strings.Replace(
+		document.ArtifactBundle.Artifacts[0].ObjectKey,
+		"/chunks/", "/parsed/", 1,
+	)
+	if _, err := validateArtifactBundle(document); err == nil {
+		t.Fatal("expected artifact type/object key mismatch to fail")
+	}
+}

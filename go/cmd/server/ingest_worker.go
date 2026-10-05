@@ -232,6 +232,10 @@ func validateArtifactBundle(document *ragv1.ParsedDocument) (*artifactBinding, e
 		!validArtifactObjectKey(reference.ManifestObjectKey, reference.ManifestSha256) {
 		return nil, errors.New("artifact manifest identity is invalid")
 	}
+	manifestParts := strings.Split(reference.ManifestObjectKey, "/")
+	if manifestParts[2] != reference.DocumentVersionId || manifestParts[3] != "artifact-manifest" {
+		return nil, errors.New("artifact manifest version binding is invalid")
+	}
 	records := make([]artifactRecordCanonical, 0, len(reference.Artifacts))
 	seen := make(map[string]struct{}, len(reference.Artifacts))
 	for _, record := range reference.Artifacts {
@@ -239,6 +243,11 @@ func validateArtifactBundle(document *ragv1.ParsedDocument) (*artifactBinding, e
 			record.ContentType == "" || record.SizeBytes <= 0 ||
 			!validArtifactObjectKey(record.ObjectKey, record.Sha256) {
 			return nil, errors.New("artifact record identity is invalid")
+		}
+		objectParts := strings.Split(record.ObjectKey, "/")
+		if objectParts[0] != manifestParts[0] || objectParts[1] != manifestParts[1] ||
+			objectParts[2] != reference.DocumentVersionId || objectParts[3] != record.ArtifactType {
+			return nil, errors.New("artifact record version binding is invalid")
 		}
 		if _, exists := seen[record.ArtifactType]; exists {
 			return nil, errors.New("artifact record type is duplicated")
