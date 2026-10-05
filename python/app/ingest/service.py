@@ -49,15 +49,24 @@ def _artifact_store() -> ObjectStore | None:
     return FilesystemObjectStore(root)
 
 
-def _delete_bundles(store: ObjectStore | None, bundles: list[ArtifactBundle]) -> None:
+def _delete_bundles(store: ObjectStore | None, bundles: list[ArtifactBundle]) -> bool:
+    """Delete all objects written during a failed parse run.
+
+    Cleanup is part of the failure contract.  Callers must be able to
+    distinguish a clean rollback from a rollback that left objects behind,
+    while the underlying storage error remains redacted.
+    """
+
     if store is None:
-        return
+        return True
+    clean = True
     for bundle in reversed(bundles):
         for record in reversed(bundle.all_records):
             try:
                 store.delete(record.object_key)
-            except Exception:  # noqa: BLE001, S110 - abort path must stay redacted
-                pass
+            except Exception:  # noqa: BLE001 - abort path must stay redacted
+                clean = False
+    return clean
 
 
 def _bundle_reference(response, bundle: ArtifactBundle) -> None:
@@ -233,7 +242,8 @@ class IngestService(rag_pb2_grpc.IngestServiceServicer):
         bundles: list[ArtifactBundle] = []
 
         def fail(message: str):
-            _delete_bundles(artifact_store, bundles)
+            if not _delete_bundles(artifact_store, bundles):
+                _fail(context, "artifact bundle cleanup was incomplete")
             _fail(context, message)
 
         response = rag_pb2.ParsePackageResponse(

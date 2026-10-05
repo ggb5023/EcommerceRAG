@@ -5,8 +5,10 @@ import unittest
 from unittest.mock import patch
 
 import grpc
-from app.ingest.service import IngestService
-from app.ingest.artifacts import read_manifest
+
+from app.ingest.artifacts import ArtifactBundle, ArtifactRecord, read_manifest
+from app.ingest.pipeline import parser_for
+from app.ingest.service import IngestService, _delete_bundles
 from app.storage import FilesystemObjectStore
 from rag.v1 import rag_pb2
 
@@ -36,6 +38,103 @@ class IngestServiceTests(unittest.TestCase):
             tenant_id="server-tenant",
             shop_id="server-shop",
         )
+
+    @staticmethod
+    def make_bundle():
+        record = ArtifactRecord(
+            artifact_type="raw",
+            object_key="server-tenant/server-shop/v-test/raw/"
+            + "0" * 64,
+            sha256="0" * 64,
+            size_bytes=1,
+            content_type="application/octet-stream",
+        )
+        manifest = ArtifactRecord(
+            artifact_type="artifact-manifest",
+            object_key="server-tenant/server-shop/v-test/artifact-manifest/"
+            + "1" * 64,
+            sha256="1" * 64,
+            size_bytes=1,
+            content_type="application/json",
+        )
+        return ArtifactBundle(
+            tenant_id="server-tenant",
+            shop_id="server-shop",
+            document_version_id="v-test",
+            records=(record,),
+            manifest=manifest,
+            artifact_set_sha256="2" * 64,
+        )
+
+    def test_failed_bundle_cleanup_reports_whether_all_objects_were_deleted(self):
+        class Store:
+            def __init__(self, failing=False):
+                self.failing = failing
+                self.deleted = []
+
+            def delete(self, key):
+                self.deleted.append(key)
+                if self.failing:
+                    raise RuntimeError("vendor secret must not escape")
+
+        bundle = self.make_bundle()
+        clean_store = Store()
+        self.assertTrue(_delete_bundles(clean_store, [bundle]))
+        self.assertEqual(len(clean_store.deleted), 2)
+        failing_store = Store(failing=True)
+        self.assertFalse(_delete_bundles(failing_store, [bundle]))
+        self.assertEqual(len(failing_store.deleted), 2)
+
+    def test_parse_failure_reports_incomplete_artifact_cleanup(self):
+        class Store:
+            def delete(self, key):
+                raise RuntimeError("secret storage detail")
+
+        first = b"# First\n\nFirst document.\n"
+        second = b"# Second\n\nSecond document.\n"
+        first_hash = hashlib.sha256(first).hexdigest()
+        second_hash = hashlib.sha256(second).hexdigest()
+        manifest = (
+            "schema_version: 1\n"
+            "pipeline_version: synthetic-parser-v1\n"
+            "source:\n  id: synthetic-source\n  name: Synthetic source\n"
+            "documents:\n"
+            f"  - document_id: first\n    title: First\n    path: docs/first.md\n"
+            "    format: markdown\n    disclosure_class: external_allowed\n"
+            f"    sha256: {first_hash}\n"
+            f"  - document_id: second\n    title: Second\n    path: docs/second.md\n"
+            "    format: markdown\n    disclosure_class: external_allowed\n"
+            f"    sha256: {second_hash}\n"
+        )
+        request = rag_pb2.ParsePackageRequest(
+            manifest_yaml=manifest,
+            files=[
+                rag_pb2.PackageFile(path="docs/first.md", content=first),
+                rag_pb2.PackageFile(path="docs/second.md", content=second),
+            ],
+            tenant_id="server-tenant",
+            shop_id="server-shop",
+        )
+        with (
+            patch("app.ingest.service._artifact_store", return_value=Store()),
+            patch(
+                "app.ingest.service.parser_for",
+                side_effect=[parser_for("markdown"), ValueError("bad input")],
+            ),
+            patch(
+                    "app.ingest.service.store_artifact_bundle",
+                    return_value=self.make_bundle(),
+            ),
+        ):
+            error_text = ""
+            try:
+                IngestService().ParsePackage(request, AbortContext())
+            except RuntimeError as raised:
+                error_text = raised.args[0][1]
+                self.assertRegex(error_text, "artifact bundle cleanup was incomplete")
+            else:
+                self.fail("ParsePackage should reject incomplete artifact cleanup")
+        self.assertNotIn("secret", error_text)
 
     def test_parses_manifest_files_and_uses_server_scope(self):
         result = IngestService().ParsePackage(self.make_request(), AbortContext())
@@ -137,14 +236,17 @@ class IngestServiceTests(unittest.TestCase):
     def test_artifact_bundle_root_is_not_allowed_for_m1_profile(self):
         import tempfile
 
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(
-                "os.environ",
-                {"RAG_PROFILE": "m1_fixture_mock", "INGEST_ARTIFACT_BUNDLE_ROOT": directory},
-                clear=False,
-            ):
-                with self.assertRaises(RuntimeError):
-                    IngestService().ParsePackage(self.make_request(), AbortContext())
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ",
+            {"RAG_PROFILE": "m1_fixture_mock", "INGEST_ARTIFACT_BUNDLE_ROOT": directory},
+            clear=False,
+        ):
+            try:
+                IngestService().ParsePackage(self.make_request(), AbortContext())
+            except RuntimeError:
+                pass
+            else:
+                self.fail("m1 profile must reject artifact bundle storage")
 
 
 if __name__ == "__main__":
