@@ -350,8 +350,45 @@ def read_manifest(store: ObjectStore, bundle: ArtifactBundle) -> dict[str, objec
         raise ArtifactBundleError("artifact manifest is invalid") from exc
     if not isinstance(value, dict) or value.get("real_service_acceptance") is not False:
         raise ArtifactBundleError("artifact manifest boundary is invalid")
+    records = value.get("artifacts")
+    if not isinstance(records, list):
+        raise ArtifactBundleError("artifact manifest records are invalid")
     expected = value.get("artifact_set_sha256")
-    actual = _sha256(_canonical({"artifacts": value.get("artifacts")}))
+    actual = _sha256(_canonical({"artifacts": records}))
     if expected != actual or expected != bundle.artifact_set_sha256:
         raise ArtifactBundleError("artifact manifest hash is invalid")
     return value
+
+
+def read_artifact_bundle(store: ObjectStore, bundle: ArtifactBundle) -> dict[str, bytes]:
+    """Read and verify every non-manifest object in a stored bundle.
+
+    The manifest is authoritative for the artifact set, while the immutable
+    ``ArtifactBundle`` reference supplies the expected object identities. No
+    object is returned until every record has passed key, size, and SHA-256
+    checks.
+    """
+
+    try:
+        manifest = read_manifest(store, bundle)
+        manifest_records = manifest["artifacts"]
+        expected_records = [record.as_dict() for record in bundle.records]
+        if manifest_records != expected_records:
+            raise ArtifactBundleError("artifact manifest records do not match bundle")
+        result: dict[str, bytes] = {}
+        for record in bundle.records:
+            data, metadata = store.get_bytes(
+                record.object_key, expected_sha256=record.sha256
+            )
+            if (metadata.key != record.object_key
+                    or metadata.sha256 != record.sha256
+                    or metadata.size_bytes != record.size_bytes):
+                raise ArtifactBundleError("stored artifact metadata does not match bundle")
+            if record.artifact_type in result:
+                raise ArtifactBundleError("artifact bundle contains duplicate types")
+            result[record.artifact_type] = data
+        return result
+    except ArtifactBundleError:
+        raise
+    except ObjectStoreError as exc:
+        raise ArtifactBundleError("artifact object could not be read") from exc

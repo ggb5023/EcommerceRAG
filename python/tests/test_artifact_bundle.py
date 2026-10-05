@@ -9,6 +9,7 @@ from app.ingest.artifacts import (
     ArtifactBundleError,
     ArtifactInput,
     build_ingestion_artifacts,
+    read_artifact_bundle,
     read_manifest,
     store_artifact_bundle,
 )
@@ -100,6 +101,8 @@ class ArtifactBundleTests(unittest.TestCase):
                 artifacts=first,
             )
             read_manifest(store, bundle)
+            artifacts = read_artifact_bundle(store, bundle)
+            self.assertEqual(artifacts["raw"], raw)
             report_record = next(record for record in bundle.records if record.artifact_type == "parse-report")
             report_data, _ = store.get_bytes(report_record.object_key, expected_sha256=report_record.sha256)
             self.assertEqual(json.loads(report_data)["chunk_count"], len(chunks))
@@ -195,6 +198,36 @@ class ArtifactBundleTests(unittest.TestCase):
             manifest_path.write_bytes(b"tampered")
             with self.assertRaises(ArtifactBundleError):
                 read_manifest(store, bundle)
+
+    def test_tampered_artifact_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = FilesystemObjectStore(directory)
+            bundle = store_artifact_bundle(
+                store,
+                tenant_id="tenant-a",
+                shop_id="shop-a",
+                document_version_id="version-1",
+                artifacts=(ArtifactInput("raw", b"raw"),),
+            )
+            artifact = next(record for record in bundle.records if record.artifact_type == "raw")
+            (Path(directory) / artifact.object_key).write_bytes(b"tampered")
+            with self.assertRaises(ArtifactBundleError):
+                read_artifact_bundle(store, bundle)
+
+    def test_missing_artifact_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = FilesystemObjectStore(directory)
+            bundle = store_artifact_bundle(
+                store,
+                tenant_id="tenant-a",
+                shop_id="shop-a",
+                document_version_id="version-1",
+                artifacts=(ArtifactInput("raw", b"raw"),),
+            )
+            artifact = next(record for record in bundle.records if record.artifact_type == "raw")
+            (Path(directory) / artifact.object_key).unlink()
+            with self.assertRaises(ArtifactBundleError):
+                read_artifact_bundle(store, bundle)
 
 
 if __name__ == "__main__":

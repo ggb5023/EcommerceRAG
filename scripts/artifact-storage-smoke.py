@@ -23,6 +23,7 @@ if str(PYTHON) not in sys.path:
 from app.ingest.artifacts import (
     ArtifactBundleError,
     ArtifactInput,
+    read_artifact_bundle,
     read_manifest,
     store_artifact_bundle,
 )
@@ -152,11 +153,10 @@ def _run(store, *, backend: str, cleanup: bool = True, output: Path | None = Non
             manifest.get("artifact_set_sha256") == bundle.artifact_set_sha256
             and manifest.get("real_service_acceptance") is False
         )
-        checks["artifacts_verified"] = all(
-            store.get_bytes(record.object_key, expected_sha256=record.sha256)[1].size_bytes
-            == record.size_bytes
-            for record in bundle.records
-        )
+        artifacts = read_artifact_bundle(store, bundle)
+        checks["artifacts_verified"] = set(artifacts) == {
+            record.artifact_type for record in bundle.records
+        }
     except Exception:  # noqa: BLE001 - vendor details must not escape
         checks["bundle_written"] = False
     finally:
