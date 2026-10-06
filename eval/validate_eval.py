@@ -33,6 +33,18 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, ob
     return result
 
 
+def _load_review_json(raw: bytes) -> object:
+    """Decode a review file without accepting duplicate keys or bad UTF-8."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"review file is not valid UTF-8: {exc}") from exc
+    try:
+        return json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"review file invalid JSON: {exc}") from exc
+
+
 def _load_case_jsonl(raw: bytes) -> tuple[list[dict], list[str]]:
     """Parse JSONL cases without allowing malformed rows to escape validation."""
     try:
@@ -100,15 +112,22 @@ def validate_review(review_path: Path, cases: list[dict]) -> tuple[list[str], co
     errors: list[str] = []
     issue_counts = collections.Counter()
     try:
-        review = json.loads(review_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        review = _load_review_json(review_path.read_bytes())
+    except (OSError, ValueError) as exc:
         return [f"review file unreadable: {exc}"], collections.Counter(), issue_counts
     if not isinstance(review, list):
         return ["review file must contain a JSON array"], collections.Counter(), issue_counts
-    case_by_id = {case["case_id"]: case for case in cases}
-    review_ids = [row.get("case_id") for row in review if isinstance(row, dict)]
+    case_by_id = {
+        case["case_id"]: case
+        for case in cases
+        if isinstance(case.get("case_id"), str)
+    }
+    review_ids: list[str] = []
     if len(review) != len(cases):
         errors.append(f"review_count={len(review)}, expected {len(cases)}")
+    for row in review:
+        if isinstance(row, dict) and isinstance(row.get("case_id"), str):
+            review_ids.append(row["case_id"])
     if len(review_ids) != len(set(review_ids)):
         issue_counts["duplicate_case_id"] += 1
         errors.append("duplicate review case_id")
@@ -120,13 +139,19 @@ def validate_review(review_path: Path, cases: list[dict]) -> tuple[list[str], co
             errors.append(f"review row {number} is not an object")
             continue
         case_id = row.get("case_id")
+        if not isinstance(case_id, str) or not case_id:
+            errors.append(f"review row {number} case_id must be a non-empty string")
         status = row.get("review_status")
-        status_counts[status] += 1
-        if status not in REVIEW_STATUSES:
+        if isinstance(status, str):
+            status_counts[status] += 1
+        else:
+            status_counts["<invalid>"] += 1
+            errors.append(f"review row {number} review_status must be a string")
+        if not isinstance(status, str) or status not in REVIEW_STATUSES:
             errors.append(f"review row {number} has invalid review_status")
         if not isinstance(row.get("review_notes"), str):
             errors.append(f"review row {number} review_notes must be a string")
-        elif status in {"needs_revision", "rejected"} and not row["review_notes"].strip():
+        elif isinstance(status, str) and status in {"needs_revision", "rejected"} and not row["review_notes"].strip():
             issue_counts["missing_notes"] += 1
             errors.append(f"review row {number} missing notes for {status}")
         source = case_by_id.get(case_id)

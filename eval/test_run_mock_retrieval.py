@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +26,54 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
             non_object.write_text("[]\n", encoding="utf-8")
             with self.assertRaisesRegex(TypeError, "must be a JSON object"):
                 MODULE.load_cases(non_object, None)
+
+    def test_fixture_loader_rejects_duplicate_keys_and_duplicate_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            duplicate_key = root / "duplicate-key.json"
+            duplicate_key.write_text(
+                '{"document_ids":["doc-1"],"document_ids":["doc-2"]}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                MODULE.load_fixture_doc_ids(duplicate_key)
+
+            duplicate_id = root / "duplicate-id.json"
+            duplicate_id.write_text('{"document_ids":["doc-1","doc-1"]}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate values"):
+                MODULE.load_fixture_doc_ids(duplicate_id)
+
+    def test_fixture_loader_rejects_invalid_utf8_and_non_object(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invalid_utf8 = root / "invalid-utf8.json"
+            invalid_utf8.write_bytes(b"[\xff]")
+            with self.assertRaisesRegex(ValueError, "not valid UTF-8"):
+                MODULE.load_fixture_doc_ids(invalid_utf8)
+
+            non_object = root / "non-object.json"
+            non_object.write_text('{"unexpected":true}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "document_ids must be a list"):
+                MODULE.load_fixture_doc_ids(non_object)
+
+    def test_malformed_fixture_main_fails_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "fixture.json"
+            fixture.write_text('{"document_ids":["doc-1","doc-1"]}', encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--fixture-doc-ids",
+                    str(fixture),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("FAIL input_integrity:", result.stdout)
+            self.assertNotIn("Traceback", result.stderr)
 
     def test_classifies_refusal_unauthorized_and_clarification(self):
         cases = [

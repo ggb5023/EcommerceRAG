@@ -184,13 +184,22 @@ def load_fixture_doc_ids(path: Path | None) -> set[str] | None:
     """
     if path is None:
         return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = path.read_bytes()
+        text = raw.decode("utf-8")
+        payload = json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"fixture is not valid UTF-8: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"fixture invalid JSON: {exc}") from exc
     if isinstance(payload, dict):
         ids = payload.get("document_ids")
     else:
         ids = payload
     if not isinstance(ids, list) or not all(isinstance(item, str) and item for item in ids):
         raise ValueError("fixture document_ids must be a list of non-empty strings")
+    if len(ids) != len(set(ids)):
+        raise ValueError("fixture document_ids contains duplicate values")
     return set(ids)
 
 
@@ -264,8 +273,12 @@ def main() -> int:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         print(f"FAIL input_integrity: {exc}")
         return 1
-    fixture_doc_ids = load_fixture_doc_ids(args.fixture_doc_ids)
-    gate, gate_sha = m2_gate_status(args.gate_manifest)
+    try:
+        fixture_doc_ids = load_fixture_doc_ids(args.fixture_doc_ids)
+        gate, gate_sha = m2_gate_status(args.gate_manifest)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        print(f"FAIL input_integrity: {exc}")
+        return 1
     counts, coverage, issues = evaluate_cases(cases)
     expected_case_count = metadata.get("case_count")
     if expected_case_count is not None and len(cases) != expected_case_count:

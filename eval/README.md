@@ -72,11 +72,20 @@ metadata. A real evaluation run must add human verification, retrieval and
 answer metrics, usage, latency, and cost without writing secrets or customer
 content.
 
+The review checklist is parsed as strict UTF-8 JSON: duplicate object keys,
+non-array roots, non-object rows, non-string case IDs, non-string or unknown
+review statuses, duplicate case IDs, and evidence drift are rejected. Allowed
+review statuses are `pending`, `approved`, `needs_revision`, and `rejected`;
+revision or rejection requires a non-empty note. The immutable JSONL is never
+modified by review validation.
+
 `run_mock_retrieval.py` produces a read-only deterministic baseline summary,
 validates the input SHA-256, and reports retrieval, evidence coverage, refusal,
 unauthorized, and multi-turn classification counts. It rejects duplicate JSON
-keys, non-object JSONL rows, invalid UTF-8, and malformed metadata before
-producing a report. `--include-cases` adds
+keys, non-object JSONL rows, invalid UTF-8, malformed metadata, duplicate
+fixture document IDs, and malformed fixture/gate files before producing a
+report. Input failures are reported as `FAIL input_integrity` without a
+traceback or partial report. `--include-cases` adds
 metadata-only per-case results (case ID, classification, tags, authorization
 scope, and expected evidence count); it never emits query or answer text.
 By default no synthetic document index is assumed, so retrieval hit rate and
