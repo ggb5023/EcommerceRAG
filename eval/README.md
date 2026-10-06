@@ -184,3 +184,20 @@ The checklist is an evidence record, not an approval mechanism. Only the
 business reviewer may change a row to `approved`; engineering must not infer
 approval from a passing machine precheck. The synthetic set is a verified
 baseline only when all 60 rows are `approved` with no unresolved notes.
+
+## Isolated Bailian evaluation
+
+`run_bailian_retrieval.py` is an explicit, metadata-only provider experiment.
+Without `--live` it performs input checks and reports `NOT_RUN`; with
+`--live --limit N` it reads the approved synthetic aligned corpus, calls the
+Alibaba Bailian embedding, rerank, and generation slots, and writes only
+case/document IDs, ranks, scores, latency, redacted model/request-ID
+fingerprints, usage presence, and structured-output counts. It never writes
+vectors, prompts, generated text, customer data, or database/M1 state. The
+default limit is three cases to keep the experiment within the reviewed quota.
+
+The current isolated report is outside the repository at
+`/var/lib/ecommerce-rag/real-docs/reports/bailian-retrieval-current.json`.
+It is `real_service_acceptance=false` and `model_quality_claim=false`. A
+successful transport and retrieval ranking run does not approve model quality,
+answer quality, real merchant data, identity, or online customer service.
