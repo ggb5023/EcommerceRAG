@@ -23,7 +23,7 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _load_content_list(root: Path) -> tuple[list[Any], str]:
+def _load_content_list(root: Path) -> tuple[list[Any], str, bytes]:
     # MinerU result archives commonly prefix the canonical file with a UUID
     # (for example ``<uuid>_content_list.json``), while some fixtures use the
     # unprefixed name.  Accept exactly one canonical v1 list and never silently
@@ -42,7 +42,37 @@ def _load_content_list(root: Path) -> tuple[list[Any], str]:
         content = json.loads(raw_bytes)
     except json.JSONDecodeError as error:
         raise ValueError("content_list_invalid_json") from error
-    return content, _digest(raw_bytes)
+    return content, _digest(raw_bytes), raw_bytes
+
+
+def _copy_image_assets(root: Path, destination: Path) -> int:
+    """Copy MinerU image assets into the staged parsed artifact safely."""
+    source = root / "images"
+    destination.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if source.is_symlink():
+        raise ValueError("images_directory_symlink")
+    if not source.exists():
+        return 0
+    if not source.is_dir():
+        raise ValueError("images_directory_invalid")
+    copied = 0
+    for path in sorted(source.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("image_asset_symlink")
+        if not path.is_file():
+            if path.is_dir():
+                continue
+            raise ValueError("image_asset_not_regular")
+        relative = path.relative_to(source)
+        if any(part in {"", ".", ".."} for part in relative.parts):
+            raise ValueError("image_asset_path_invalid")
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with path.open("rb") as source_handle, target.open("xb") as target_handle:
+            shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
+        target.chmod(0o600)
+        copied += 1
+    return copied
 
 
 def _validate_component(value: str, name: str) -> str:
@@ -154,7 +184,7 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
     result_sha256 = _validate_sha256(result_sha256, "result_sha256")
     if max_chars <= 0:
         raise ValueError("max_chars must be positive")
-    raw, raw_sha256 = _load_content_list(root)
+    raw, raw_sha256, raw_bytes = _load_content_list(root)
     normalized = normalize_content_list(raw, document_id=document_id, version_id=version_id)
     if not normalized:
         raise ValueError("parsed_elements_empty")
@@ -202,6 +232,9 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
     chunks_dir = staging_root
     layout = {"document_id": document_id, "document_version_id": version_id,
               "elements": normalized}
+    _write_staged_atomic(staging_root, parsed_dir / "content_list.json",
+                         raw_bytes.decode("utf-8"))
+    image_asset_count = _copy_image_assets(root, parsed_dir / "images")
     _write_staged_atomic(staging_root, parsed_dir / "layout.json",
                          json.dumps(layout, ensure_ascii=False, indent=2) + "\n")
     lines = []
@@ -246,8 +279,10 @@ def process(root: Path, *, document_id: str, version_id: str, output_root: Path,
         "page_numbers": sorted({item["page_no"] for item in normalized if isinstance(item.get("page_no"), int)}),
         "table_count": sum(item["type"] == "table" for item in normalized),
         "image_count": sum(item["type"] == "image" for item in normalized),
+        "image_asset_count": image_asset_count,
         "warning_count": sum(bool(item.get("warning")) for item in normalized),
         "chunk_rule_version": chunks[0].rule_version if chunks else "structured-v2",
+            "content_list_path": str(Path("parsed") / document_id / version_id / "content_list.json"),
             "parsed_artifact_path": str(Path("parsed") / document_id / version_id),
             "chunk_path": str(Path("chunks") / f"{document_id}-{version_id}.jsonl"),
         "real_service_acceptance": False,

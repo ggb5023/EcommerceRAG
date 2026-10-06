@@ -85,6 +85,43 @@ def test_process_mineru_result_is_repeatable_and_keeps_raw_input_hash(tmp_path: 
     assert json.loads((parsed / "meta.json").read_text())["task_id"] == "task-123"
 
 
+def test_process_preserves_content_list_and_copies_image_assets(tmp_path: Path):
+    artifact = tmp_path / "artifact"
+    (artifact / "images" / "nested").mkdir(parents=True)
+    content = [{"type": "text", "text": "Pico", "page_no": 1}]
+    content_bytes = json.dumps(content, ensure_ascii=False, separators=(",", ":")).encode()
+    (artifact / "content_list.json").write_bytes(content_bytes)
+    (artifact / "images" / "nested" / "diagram.png").write_bytes(b"png-bytes")
+
+    output = tmp_path / "output"
+    report = process(artifact, document_id="image-doc", version_id="v1",
+                     output_root=output, tenant_id="lab", shop_id="shop")
+    parsed = output / "parsed" / "image-doc" / "v1"
+    assert (parsed / "content_list.json").read_bytes() == content_bytes
+    assert (parsed / "images" / "nested" / "diagram.png").read_bytes() == b"png-bytes"
+    assert report["image_asset_count"] == 1
+    assert report["content_list_path"] == "parsed/image-doc/v1/content_list.json"
+
+
+def test_process_rejects_symlinked_image_assets(tmp_path: Path):
+    import pytest
+
+    artifact = tmp_path / "artifact"
+    (artifact / "images").mkdir(parents=True)
+    (artifact / "content_list.json").write_text(
+        json.dumps([{"type": "text", "text": "Pico"}]), encoding="utf-8"
+    )
+    target = tmp_path / "outside.png"
+    target.write_bytes(b"outside")
+    try:
+        (artifact / "images" / "outside.png").symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="image_asset_symlink"):
+        process(artifact, document_id="image-doc", version_id="v1",
+                output_root=tmp_path / "output", tenant_id="lab", shop_id="shop")
+
+
 def test_table_without_text_is_linearized_and_chunked(tmp_path: Path):
     artifact = tmp_path / "artifact"
     artifact.mkdir()
@@ -278,6 +315,17 @@ def test_mineru_integrity_validator_rejects_tampered_result_and_chunk(tmp_path: 
     assert "result_sha256_mismatch" in row["errors"]
     assert "chunk_document_id_mismatch:4" in row["errors"]
     assert "chunk_count_mismatch" in row["errors"]
+
+
+def test_mineru_integrity_validator_rejects_tampered_content_list(tmp_path: Path):
+    root = _build_integrity_fixture(tmp_path)
+    content_list = next((root / "parsed").glob("*/*/content_list.json"))
+    content_list.write_text("[]", encoding="utf-8")
+
+    report = validate(root)
+    row = report["documents"][0]
+    assert row["status"] == "FAIL"
+    assert "input_content_list_sha256_mismatch" in row["errors"]
 
 
 def test_legacy_mineru_metadata_is_not_reported_as_full_pass(tmp_path: Path):

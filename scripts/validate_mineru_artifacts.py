@@ -90,6 +90,31 @@ def _check_chunks(path: Path, document_id: str, version_id: str) -> tuple[int, l
     return count, errors
 
 
+def _check_image_assets(parsed_dir: Path, expected: Any) -> tuple[int, list[str]]:
+    """Validate the optional image directory without following symlinks."""
+    image_dir = parsed_dir / "images"
+    if not image_dir.exists():
+        return 0, ["image_assets_missing"]
+    if image_dir.is_symlink() or not image_dir.is_dir():
+        return 0, ["image_assets_invalid"]
+    errors: list[str] = []
+    count = 0
+    for path in sorted(image_dir.rglob("*")):
+        if path.is_symlink():
+            errors.append("image_asset_symlink")
+        elif path.is_file():
+            count += 1
+        elif not path.is_dir():
+            errors.append("image_asset_not_regular")
+    if expected is None:
+        errors.append("image_asset_count_missing")
+    elif isinstance(expected, bool) or not isinstance(expected, int) or expected < 0:
+        errors.append("image_asset_count_invalid")
+    elif expected != count:
+        errors.append("image_asset_count_mismatch")
+    return count, errors
+
+
 def validate(root: Path) -> dict[str, Any]:
     """Return a metadata-only consistency report for one artifact root."""
     root = root.resolve()
@@ -178,6 +203,30 @@ def validate(root: Path) -> dict[str, Any]:
                 errors.append("element_count_mismatch")
         if not full_md_path.is_file():
             errors.append("full_md_missing")
+
+        content_list_path = parsed_dir / "content_list.json"
+        if not content_list_path.is_file():
+            warnings.append("content_list_missing")
+        else:
+            try:
+                content_list_bytes = content_list_path.read_bytes()
+                content_list = json.loads(content_list_bytes)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                errors.append("content_list_invalid")
+            else:
+                if not isinstance(content_list, list):
+                    errors.append("content_list_not_array")
+                declared_content_hash = meta.get("input_content_list_sha256")
+                if not _valid_hash(declared_content_hash):
+                    errors.append("input_content_list_sha256_missing_or_invalid")
+                elif declared_content_hash != hashlib.sha256(content_list_bytes).hexdigest():
+                    errors.append("input_content_list_sha256_mismatch")
+        _, image_errors = _check_image_assets(parsed_dir, meta.get("image_asset_count"))
+        if "image_assets_missing" in image_errors or "image_asset_count_missing" in image_errors:
+            warnings.extend(image_errors)
+            image_errors = [error for error in image_errors
+                            if error not in {"image_assets_missing", "image_asset_count_missing"}]
+        errors.extend(image_errors)
 
         chunk_path, explicit_chunk_path, chunk_path_error = _chunk_path(
             root, parsed_dir, meta, document_id, version_id
