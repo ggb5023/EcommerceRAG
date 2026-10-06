@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from scripts.build_source_fixtures import build
 from scripts.run_source_parsers import main as run_parser_main, run
+from scripts.run_chunk_report import main as run_chunk_report_main
 from scripts.validate_source_fixtures import validate
 
 
@@ -138,3 +139,77 @@ def test_source_parser_cli_writes_metadata_only_manifest_failure(tmp_path: Path,
     assert report["error_code"] == "manifest_not_object"
     assert report["real_service_acceptance"] is False
     assert report["reports"] == []
+
+
+def _write_parse_report(root: Path) -> dict:
+    report = run(root)
+    (root / "reports").mkdir(parents=True, exist_ok=True)
+    (root / "reports" / "parse-report.json").write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
+    )
+    return report
+
+
+def test_chunk_report_binds_every_chunk_to_current_source_bytes(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    _write_parse_report(root)
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 0
+    report = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "PASS"
+    assert report["chunk_count"] == 45
+    assert report["real_service_acceptance"] is False
+
+
+def test_chunk_report_rejects_tampered_fixture_source_hash(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    passed = next(item for item in report["reports"] if item["parse_status"] == "PASS")
+    fixture_id = passed["fixture_id"]
+    passed["source_sha256"] = "0" * 64
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert f"source_sha256_mismatch:{fixture_id}" in output["errors"]
+    assert output["real_service_acceptance"] is False
+
+
+def test_chunk_report_rejects_chunk_source_binding_drift(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    passed = next(item for item in report["reports"] if item["parse_status"] == "PASS")
+    fixture_id = passed["fixture_id"]
+    passed["chunks"][0]["source_path"] = "../outside.md"
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert f"chunk_source_mismatch:{fixture_id}:0" in output["errors"]
+
+
+def test_chunk_report_rejects_source_symlink_alias(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    passed = next(item for item in report["reports"] if item["parse_status"] == "PASS")
+    fixture_id = passed["fixture_id"]
+    original = root / passed["source_path"]
+    alias = root / "alias-source.md"
+    alias.symlink_to(original)
+    passed["source_path"] = alias.relative_to(root).as_posix()
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert f"source_path_unsafe:{fixture_id}" in output["errors"]
