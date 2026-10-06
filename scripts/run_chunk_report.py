@@ -74,12 +74,33 @@ def validate_source_traceability(data: object, root: Path) -> list[str]:
             errors.append(f"report_fixture_id_duplicate:{fixture_id}")
         else:
             seen_fixture_ids.add(fixture_id)
+        counts: dict[str, object] = {
+            "element_count": report.get("element_count"),
+            "chunk_count": report.get("chunk_count"),
+            "warning_count": report.get("warning_count"),
+            "source_position_coverage": report.get("source_position_coverage"),
+        }
+        for field, value in counts.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                errors.append(f"parse_report_count_invalid:{field}:{fixture_id}")
         if report.get("parse_status") not in {"PASS", "FAILED"}:
             errors.append(f"report_parse_status_invalid:{fixture_id}")
             continue
         if report.get("parse_status") != "PASS":
             continue
         label = fixture_id
+        element_count = counts["element_count"]
+        chunk_count = counts["chunk_count"]
+        warning_count = counts["warning_count"]
+        source_position_coverage = counts["source_position_coverage"]
+        if all(isinstance(value, int) and not isinstance(value, bool)
+               for value in (element_count, chunk_count, warning_count, source_position_coverage)):
+            if chunk_count < element_count:
+                errors.append(f"parse_report_count_order_invalid:chunk_count:{label}")
+            if warning_count > element_count:
+                errors.append(f"parse_report_count_order_invalid:warning_count:{label}")
+            if source_position_coverage > element_count:
+                errors.append(f"parse_report_count_order_invalid:source_position_coverage:{label}")
         source_path = report.get("source_path")
         source = _source_path(root, source_path)
         if source is None:
@@ -102,6 +123,8 @@ def validate_source_traceability(data: object, root: Path) -> list[str]:
         if not isinstance(chunks, list):
             errors.append(f"chunks_not_array:{label}")
             continue
+        if isinstance(chunk_count, int) and not isinstance(chunk_count, bool) and chunk_count != len(chunks):
+            errors.append(f"parse_report_count_mismatch:chunk_count:{label}")
         for chunk_index, chunk in enumerate(chunks):
             if not isinstance(chunk, dict):
                 errors.append(f"chunk_not_object:{label}:{chunk_index}")

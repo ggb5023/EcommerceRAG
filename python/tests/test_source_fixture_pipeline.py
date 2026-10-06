@@ -9,8 +9,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "python"))
 
 from scripts.build_source_fixtures import build
-from scripts.run_source_parsers import main as run_parser_main, run
 from scripts.run_chunk_report import main as run_chunk_report_main
+from scripts.run_source_parsers import main as run_parser_main
+from scripts.run_source_parsers import run
 from scripts.validate_source_fixtures import validate
 
 
@@ -234,6 +235,38 @@ def test_chunk_report_rejects_tampered_summary_counts(tmp_path: Path, monkeypatc
     output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
     assert output["status"] == "FAIL"
     assert "parse_report_summary_mismatch:passed" in output["errors"]
+
+
+def test_chunk_report_rejects_impossible_element_warning_counts(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    passed = next(item for item in report["reports"] if item["parse_status"] == "PASS")
+    fixture_id = passed["fixture_id"]
+    passed["warning_count"] = passed["element_count"] + 1
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert f"parse_report_count_order_invalid:warning_count:{fixture_id}" in output["errors"]
+
+
+def test_chunk_report_rejects_chunk_count_drift(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    passed = next(item for item in report["reports"] if item["parse_status"] == "PASS")
+    fixture_id = passed["fixture_id"]
+    passed["chunk_count"] += 1
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert f"parse_report_count_mismatch:chunk_count:{fixture_id}" in output["errors"]
 
 
 def test_chunk_report_rejects_real_service_acceptance_flag(tmp_path: Path, monkeypatch):
