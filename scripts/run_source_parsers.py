@@ -13,9 +13,20 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "python"))
 from app.ingest.pipeline import chunk_elements_v2, parser_for
+
 from scripts.validate_source_fixtures import safe_fixture_path
 
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate manifest keys instead of silently keeping the last value."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate_json_key:{key}")
+        result[key] = value
+    return result
 
 
 def file_sha256(path: Path) -> str:
@@ -29,13 +40,16 @@ def file_sha256(path: Path) -> str:
 def load_manifest(root: Path) -> dict:
     """Read only a well-formed fixture manifest before parsing any input."""
     try:
-        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        manifest = json.loads(
+            (root / "manifest.json").read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"manifest_invalid:{type(exc).__name__}") from exc
     if not isinstance(manifest, dict):
-        raise ValueError("manifest_not_object")
+        raise ValueError("manifest_not_object")  # noqa: TRY004
     if not isinstance(manifest.get("fixtures"), list):
-        raise ValueError("fixtures_must_be_array")
+        raise ValueError("fixtures_must_be_array")  # noqa: TRY004
     return manifest
 
 
@@ -44,7 +58,7 @@ def run(root: Path) -> dict:
     reports = []
     for index, item in enumerate(manifest.get("fixtures", [])):
         if not isinstance(item, dict):
-            raise ValueError(f"fixture_not_object:{index}")
+            raise ValueError(f"fixture_not_object:{index}")  # noqa: TRY004
         fixture_id = item.get("fixture_id", f"<fixture-{index}>")
         format_name = item.get("format")
         expected_status = item.get("expected_parse_status")

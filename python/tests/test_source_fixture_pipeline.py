@@ -85,6 +85,20 @@ def test_fixture_validator_rejects_invalid_manifest_without_raising(tmp_path: Pa
     assert report["errors"] == ["manifest_invalid:JSONDecodeError"]
 
 
+def test_fixture_validator_rejects_duplicate_manifest_keys(tmp_path: Path):
+    root = tmp_path / "source-fixtures"
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        '{"manifest_version":"source-fixtures-v1","fixtures":[],"fixtures":[]}',
+        encoding="utf-8",
+    )
+
+    report = validate(root)
+
+    assert report["status"] == "FAIL"
+    assert report["errors"] == ["manifest_invalid:ValueError"]
+
+
 def test_fixture_validator_rejects_untyped_ids_and_tags_without_raising(tmp_path: Path):
     root = tmp_path / "source-fixtures"
     manifest = build(root)
@@ -131,6 +145,20 @@ def test_source_parser_accepts_only_manifest_fixture_arrays(tmp_path: Path):
     import pytest
 
     with pytest.raises(ValueError, match="fixtures_must_be_array"):
+        run(root)
+
+
+def test_source_parser_rejects_duplicate_manifest_keys(tmp_path: Path):
+    root = tmp_path / "source-fixtures"
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        '{"manifest_version":"source-fixtures-v1","fixtures":[],"fixtures":[]}',
+        encoding="utf-8",
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="manifest_invalid:ValueError"):
         run(root)
 
 
