@@ -13,7 +13,7 @@ from app.ingest.artifacts import (
     read_manifest,
     store_artifact_bundle,
 )
-from app.ingest.pipeline import MarkdownParser, chunk_elements_v2
+from app.ingest.pipeline import MarkdownParser, ParsedElement, chunk_elements_v2
 from app.storage import FilesystemObjectStore, ObjectStoreError
 
 
@@ -53,6 +53,31 @@ class ArtifactBundleTests(unittest.TestCase):
                 chunks=(),
                 parse_report={"status": "FAILED"},
             )
+
+    def test_structured_builder_rejects_missing_document_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.md"
+            source.write_text("# Shipping\n\nDelivery takes two days.\n", encoding="utf-8")
+            metadata = {
+                "tenant_id": "tenant-a", "shop_id": "shop-a", "title": "Shipping",
+                "disclosure_class": "external_allowed", "effective_from": "2026-01-01",
+            }
+            elements = MarkdownParser().parse(source, document_id="doc-a", version_id="version-1", metadata=metadata)
+            chunks = chunk_elements_v2(elements, max_chars=80)
+            invalid = ParsedElement(
+                document_id=elements[0].document_id,
+                document_version_id="",
+                title=elements[0].title,
+                heading=elements[0].heading,
+                content=elements[0].content,
+                source_position=elements[0].source_position,
+                metadata=elements[0].metadata,
+                disclosure_class=elements[0].disclosure_class,
+                effective_from=elements[0].effective_from,
+                effective_to=elements[0].effective_to,
+            )
+            with self.assertRaisesRegex(ArtifactBundleError, "document_version_id"):
+                build_ingestion_artifacts(raw=source.read_bytes(), elements=[invalid], chunks=chunks, parse_report={})
 
     def test_structured_parser_output_has_one_deterministic_bundle_shape(self):
         raw = b"# Shipping\n\nDelivery takes two days.\n"
@@ -217,6 +242,12 @@ class ArtifactBundleTests(unittest.TestCase):
                 store_artifact_bundle(
                     store,
                     **{**common, "tenant_id": "../tenant"},
+                    artifacts=(ArtifactInput("raw", b"a"),),
+                )
+            with self.assertRaisesRegex(ArtifactBundleError, "artifact bundle identity"):
+                store_artifact_bundle(
+                    store,
+                    **{**common, "document_version_id": None},
                     artifacts=(ArtifactInput("raw", b"a"),),
                 )
 

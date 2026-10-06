@@ -141,6 +141,9 @@ def object_key(
 ) -> str:
     """Build the immutable five-part key used by both adapters."""
 
+    for value in (tenant_id, shop_id, document_version_id, artifact_type, sha256):
+        if not isinstance(value, str) or not value.strip():
+            raise ObjectStoreError("object key identity is invalid")
     key = f"{tenant_id}/{shop_id}/{document_version_id}/{artifact_type}/{sha256}"
     return _validate_key(key)
 

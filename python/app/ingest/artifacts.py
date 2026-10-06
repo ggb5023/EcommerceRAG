@@ -191,11 +191,20 @@ def build_ingestion_artifacts(
         raise ArtifactBundleError("parsed artifact must contain an element")
     if not chunk_rows:
         raise ArtifactBundleError("chunk artifact must contain a chunk")
-    versions = {
-        str(row["document_version_id"])
-        for row in (*element_rows, *chunk_rows)
-        if row.get("document_version_id")
-    }
+    rows = (*element_rows, *chunk_rows)
+    document_ids: set[str] = set()
+    versions: set[str] = set()
+    for row in rows:
+        document_id = row.get("document_id")
+        version_id = row.get("document_version_id")
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise ArtifactBundleError("parsed artifact document_id is invalid")
+        if not isinstance(version_id, str) or not version_id.strip():
+            raise ArtifactBundleError("parsed artifact document_version_id is invalid")
+        document_ids.add(document_id)
+        versions.add(version_id)
+    if len(document_ids) > 1:
+        raise ArtifactBundleError("parsed artifacts contain multiple documents")
     if len(versions) > 1:
         raise ArtifactBundleError("parsed artifacts contain multiple document versions")
     if not isinstance(parse_report, Mapping):
@@ -258,6 +267,9 @@ def store_artifact_bundle(
     items = tuple(artifacts)
     if not items:
         raise ArtifactBundleError("artifact bundle must contain an artifact")
+    for value in (tenant_id, shop_id, document_version_id):
+        if not isinstance(value, str) or not value.strip():
+            raise ArtifactBundleError("artifact bundle identity is invalid")
     if not all(isinstance(item, ArtifactInput) for item in items):
         raise ArtifactBundleError("artifact bundle contains an invalid item")
     for item in items:
