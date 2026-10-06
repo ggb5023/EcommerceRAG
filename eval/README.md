@@ -219,3 +219,11 @@ M2 service acceptance.
 The current report is outside the repository at
 `/var/lib/ecommerce-rag/real-docs/reports/bailian-pgvector-current.json` and
 has `real_service_acceptance=false`.
+
+Both isolated Provider evaluators now require an explicit `document_version_id`
+for every corpus document and chunk. They reject duplicate chunk IDs, parent
+document/version drift, and tenant/shop mismatches before sending embeddings.
+The retrieval and pgvector reports retain document/version/chunk IDs in their
+metadata-only result records. This binds ranking evidence to an immutable
+document version; it does not publish the version, persist production vectors,
+or make the experiment M2 real-service acceptance.
