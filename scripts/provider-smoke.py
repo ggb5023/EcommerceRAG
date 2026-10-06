@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import pathlib
 import sys
@@ -29,6 +30,63 @@ SLOTS = {
     "rerank": ("RERANK_MODEL",),
     "generation": ("GENERATION_MODEL",),
 }
+
+
+def _identifier_fingerprint(value: object) -> str | None:
+    """Return a non-reversible identifier for an operator report."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _live_result_metadata(slot: str, result: object) -> dict[str, object]:
+    """Extract redacted metadata from a provider result.
+
+    Embedding returns one result per input while the other slots return one
+    result.  Keeping that distinction here prevents a successful embedding
+    request from being reported without its request ID or usage metadata.
+    """
+    if slot == "embedding":
+        if not isinstance(result, (list, tuple)) or not result:
+            return {
+                "model_fingerprint": None,
+                "request_id_fingerprint": None,
+                "request_id_present": False,
+                "usage_present": False,
+                "metadata_complete": False,
+                "error_code": "invalid_result_shape",
+            }
+        items = list(result)
+    else:
+        items = [result]
+
+    request_ids = [getattr(item, "request_id", "") for item in items]
+    models = [getattr(item, "model", "") for item in items]
+    usages = [getattr(item, "usage", None) for item in items]
+    request_id_present = all(isinstance(value, str) and bool(value.strip()) for value in request_ids)
+    usage_present = all(value is not None for value in usages)
+    model_fingerprint = _identifier_fingerprint(models[0]) if models else None
+    request_id_fingerprint = (
+        _identifier_fingerprint(request_ids[0]) if request_ids else None
+    )
+    consistent_model = bool(models) and all(value == models[0] for value in models)
+    consistent_request_id = bool(request_ids) and all(value == request_ids[0] for value in request_ids)
+    metadata_complete = request_id_present and usage_present and consistent_model and consistent_request_id
+    error_code = None
+    if not request_id_present:
+        error_code = "missing_request_id"
+    elif not usage_present:
+        error_code = "missing_usage"
+    elif not consistent_model or not consistent_request_id:
+        error_code = "inconsistent_metadata"
+    return {
+        "model_fingerprint": model_fingerprint,
+        "request_id_fingerprint": request_id_fingerprint,
+        "request_id_present": request_id_present,
+        "usage_present": usage_present,
+        "metadata_complete": metadata_complete,
+        "error_code": error_code,
+    }
 
 
 def _require_string(value: object, field: str) -> str:
@@ -189,14 +247,18 @@ async def _live_smoke(config_path: pathlib.Path) -> tuple[str, int]:
         started = time.monotonic()
         try:
             result = await call()
-            request_id = getattr(result, "request_id", "")
-            usage = getattr(result, "usage", None)
+            metadata = _live_result_metadata(slot, result)
+            metadata_ok = bool(metadata["metadata_complete"])
             reports.append(
                 {
                     "slot": slot,
-                    "status": "PASS",
-                    "request_id_present": bool(request_id),
-                    "usage_present": usage is not None,
+                    "status": "PASS" if metadata_ok else "FAIL",
+                    "error_code": metadata["error_code"],
+                    "model_fingerprint": metadata["model_fingerprint"],
+                    "request_id_fingerprint": metadata["request_id_fingerprint"],
+                    "request_id_present": metadata["request_id_present"],
+                    "usage_present": metadata["usage_present"],
+                    "metadata_complete": metadata_ok,
                     "latency_ms": round((time.monotonic() - started) * 1000, 1),
                 }
             )

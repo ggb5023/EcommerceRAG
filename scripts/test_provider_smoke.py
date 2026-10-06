@@ -12,6 +12,29 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ProviderSmokeFixtureTests(unittest.TestCase):
+    class Result:
+        def __init__(self, model="model", request_id="request", usage=object()):
+            self.model = model
+            self.request_id = request_id
+            self.usage = usage
+
+    def test_live_metadata_handles_embedding_result_sequence(self):
+        metadata = MODULE._live_result_metadata(
+            "embedding", [self.Result(), self.Result()]
+        )
+        self.assertTrue(metadata["metadata_complete"])
+        self.assertTrue(metadata["request_id_present"])
+        self.assertTrue(metadata["usage_present"])
+        self.assertEqual(len(metadata["model_fingerprint"]), 12)
+        self.assertEqual(len(metadata["request_id_fingerprint"]), 12)
+
+    def test_live_metadata_rejects_missing_embedding_usage(self):
+        metadata = MODULE._live_result_metadata(
+            "embedding", [self.Result(usage=None)]
+        )
+        self.assertFalse(metadata["metadata_complete"])
+        self.assertEqual(metadata["error_code"], "missing_usage")
+
     def test_repository_fixture_validates_without_provider_config(self):
         report = MODULE.validate_response_fixture(
             PATH.with_name("provider-smoke-fixture.json")
