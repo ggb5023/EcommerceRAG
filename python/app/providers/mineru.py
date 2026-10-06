@@ -236,7 +236,9 @@ def safe_extract_zip(raw: bytes, destination: Path, *, max_members: int = 10000,
                 normalized = posixpath.normpath(name).rstrip("/")
                 if not name or normalized in {".", ""}:
                     continue
-                if normalized.startswith("../") or normalized == ".." or name.startswith("/"):
+                raw_parts = name.split("/")
+                if ("\x00" in name or any(part in {".", ".."} for part in raw_parts)
+                        or normalized.startswith("../") or normalized == ".." or name.startswith("/")):
                     raise ProviderError("unsafe_result_archive", "MinerU result contains an unsafe path", provider="mineru")
                 mode = (member.external_attr >> 16) & 0o170000
                 is_dir = member.is_dir() or mode == stat.S_IFDIR

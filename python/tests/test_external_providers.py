@@ -143,6 +143,16 @@ def test_mineru_rejects_zip_traversal(tmp_path):
     assert getattr(raised.value, "code", None) == "unsafe_result_archive"
 
 
+def test_mineru_rejects_normalized_dotdot_path(tmp_path):
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("nested/../escape.txt", "bad")
+    import pytest
+    with pytest.raises(Exception) as raised:
+        safe_extract_zip(payload.getvalue(), tmp_path / "parsed")
+    assert getattr(raised.value, "code", None) == "unsafe_result_archive"
+
+
 def test_mineru_rejects_symlink_and_cleans_destination(tmp_path):
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
