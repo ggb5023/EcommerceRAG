@@ -33,6 +33,20 @@ def test_markdown_headings_and_long_text(tmp_path: Path):
     assert all(chunk.chunk_hash and chunk.section_seq for chunk in chunks)
 
 
+def test_markdown_table_excludes_syntax_delimiter_row(tmp_path: Path):
+    path = tmp_path / "table.md"
+    path.write_text(
+        "| 字段 | 值 |\n"
+        "| --- | --- |\n"
+        "| sku | SYN-001 |\n",
+        encoding="utf-8",
+    )
+    elements = MarkdownParser().parse(path, document_id="doc", version_id="v1", metadata=metadata())
+    table = next(element for element in elements if element.element_type == "table")
+    assert table.table_body == [["字段", "值"], ["sku", "SYN-001"]]
+    assert "---" not in table.content
+
+
 def test_docx_headings_paragraphs_and_table(tmp_path: Path):
     path = tmp_path / "guide.docx"
     xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

@@ -181,7 +181,10 @@ class MarkdownParser:
                 while index < len(lines) and is_table_row(lines[index]):
                     rows.append(lines[index])
                     index += 1
-                parsed_rows = table_body(rows)
+                # The delimiter row is Markdown syntax, not a business-data
+                # row. Keep the source range unchanged for traceability while
+                # excluding it from the table element and searchable text.
+                parsed_rows = table_body(rows[:1] + rows[2:])
                 elements.append(_common(
                     document_id, version_id, metadata, title,
                     "\n".join(" | ".join(row) for row in parsed_rows),
