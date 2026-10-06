@@ -19,7 +19,11 @@ PYTHON = ROOT / "python"
 if str(PYTHON) not in sys.path:
     sys.path.insert(0, str(PYTHON))
 
-from app.providers.config import ProviderConfigError, load_provider_config
+from app.providers.config import (
+    ProviderConfigError,
+    ensure_secure_config_file,
+    load_provider_config,
+)
 
 SLOTS = ("control", "embedding", "rerank", "generation")
 
@@ -31,6 +35,7 @@ def _endpoint_host(endpoint: str) -> str | None:
 
 def build_report(path: Path) -> tuple[dict[str, object], int]:
     try:
+        ensure_secure_config_file(path)
         config = load_provider_config(path)
     except ProviderConfigError as exc:
         status = exc.code if exc.code in {"CONFIG_BLOCKED", "CONFIG_FAIL"} else "CONFIG_BLOCKED"

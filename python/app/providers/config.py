@@ -9,6 +9,7 @@ overriding the reviewed configuration in ``/etc/ecommerce-rag``.
 from __future__ import annotations
 
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -221,3 +222,16 @@ def validate_values(values: dict[str, str]) -> ProviderConfig:
 
 def load_provider_config(path: str | Path = CONFIG_PATH) -> ProviderConfig:
     return validate_values(parse_env_file(path))
+
+
+def ensure_secure_config_file(path: str | Path = CONFIG_PATH) -> None:
+    """Require an online provider config to be readable only by its owner."""
+    config_path = Path(path)
+    try:
+        mode = stat.S_IMODE(config_path.stat().st_mode)
+    except OSError as exc:
+        raise ProviderConfigError("provider configuration file is unavailable") from exc
+    if mode != 0o600:
+        raise ProviderConfigError(
+            "provider configuration permissions must be 0600", code="CONFIG_FAIL"
+        )

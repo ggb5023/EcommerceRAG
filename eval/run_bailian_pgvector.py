@@ -34,7 +34,11 @@ if str(EVAL_ROOT) not in sys.path:
     sys.path.insert(0, str(EVAL_ROOT))
 
 from app.providers import build_provider
-from app.providers.config import ProviderConfigError, load_provider_config
+from app.providers.config import (
+    ProviderConfigError,
+    ensure_secure_config_file,
+    load_provider_config,
+)
 from app.providers.contracts import EmbeddingResult, ProviderError
 from run_bailian_retrieval import (
     DEFAULT_ALIGNMENT,
@@ -46,7 +50,7 @@ from run_bailian_retrieval import (
     load_inputs,
     select_cases,
     sha256,
-    validate_corpus_versions,
+    validate_corpus_versions,  # noqa: F401 - retained as a module compatibility export
 )
 
 DEFAULT_DB_ENV = Path("/etc/ecommerce-rag/m1-review.env")
@@ -346,6 +350,7 @@ async def main_async(args: argparse.Namespace) -> int:
             report["status"] = "CONFIG_BLOCKED"
             print(json.dumps(report, ensure_ascii=False))
             return 3
+        ensure_secure_config_file(args.env)
         config = load_provider_config(args.env)
         if config.profile != "aliyun-bailian":
             raise ProviderConfigError("provider profile is not aliyun-bailian")

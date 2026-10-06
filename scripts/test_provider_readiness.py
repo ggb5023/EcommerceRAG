@@ -31,6 +31,7 @@ BASE = {
 def write_config(directory: str, values: dict[str, str]) -> Path:
     path = Path(directory) / "providers.env"
     path.write_text("\n".join(f"{key}={value}" for key, value in values.items()) + "\n", encoding="utf-8")
+    path.chmod(0o600)
     return path
 
 
@@ -65,6 +66,16 @@ class ProviderReadinessTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(report["status"], "MOCK_ONLY")
         self.assertFalse(report["real_service_acceptance"])
+
+    def test_world_readable_config_is_config_fail_without_network(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_config(directory, BASE)
+            path.chmod(0o644)
+            report, exit_code = MODULE.build_report(path)
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(report["status"], "CONFIG_FAIL")
+        self.assertEqual(report["online_smoke"], "NOT_RUN")
+        self.assertFalse(report["secret_values_saved"])
 
 
 if __name__ == "__main__":

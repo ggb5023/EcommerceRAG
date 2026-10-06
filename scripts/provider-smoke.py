@@ -25,7 +25,11 @@ if str(PYTHON) not in sys.path:
     sys.path.insert(0, str(PYTHON))
 
 from app.providers import build_provider
-from app.providers.config import ProviderConfigError, load_provider_config
+from app.providers.config import (
+    ProviderConfigError,
+    ensure_secure_config_file,
+    load_provider_config,
+)
 from app.providers.contracts import ProviderError
 
 SLOTS = {
@@ -258,6 +262,7 @@ async def _live_smoke(
     config_path: pathlib.Path, output_path: pathlib.Path | None = None
 ) -> tuple[str, int]:
     try:
+        ensure_secure_config_file(config_path)
         config = load_provider_config(config_path)
     except ProviderConfigError as exc:
         print(f"NOT_RUN/CONFIG_BLOCKED {exc}")
@@ -399,6 +404,7 @@ def main() -> int:
         _, exit_code = asyncio.run(_live_smoke(pathlib.Path(args.env), args.output))
         return exit_code
     try:
+        ensure_secure_config_file(pathlib.Path(args.env))
         config = load_provider_config(pathlib.Path(args.env))
     except ProviderConfigError as exc:
         print(f"{exc.code} {exc}")

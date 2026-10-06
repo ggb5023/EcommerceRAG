@@ -28,7 +28,11 @@ if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
 from app.providers import build_provider
-from app.providers.config import ProviderConfigError, load_provider_config
+from app.providers.config import (
+    ProviderConfigError,
+    ensure_secure_config_file,
+    load_provider_config,
+)
 from app.providers.contracts import ProviderError
 
 DEFAULT_CASES = ROOT / "eval" / "synthetic_cases.jsonl"
@@ -370,6 +374,7 @@ async def main_async(args: argparse.Namespace) -> int:
         return 0
     try:
         selected = select_cases(cases, args.limit)
+        ensure_secure_config_file(args.env)
         config = load_provider_config(args.env)
         if config.profile != "aliyun-bailian":
             raise ProviderConfigError("provider profile is not aliyun-bailian")
