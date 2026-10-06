@@ -86,6 +86,7 @@ def run(root: Path) -> dict:
             result["parse_status"] = "PASS"
             result["element_count"] = len(elements)
             result["chunk_count"] = len(chunks)
+            result["warning_count"] = sum(bool(element.warning) for element in elements)
             result["source_position_coverage"] = sum(bool(e.source_position) for e in elements)
             result["chunks"] = [{
                 "document_version_id": c.version_id,
