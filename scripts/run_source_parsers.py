@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -15,6 +16,14 @@ from app.ingest.pipeline import chunk_elements_v2, parser_for
 from scripts.validate_source_fixtures import safe_fixture_path
 
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def load_manifest(root: Path) -> dict:
@@ -45,11 +54,15 @@ def run(root: Path) -> dict:
             "expected_parse_status": expected_status,
             "parse_status": "FAILED", "element_count": 0, "chunk_count": 0,
             "warning_count": 0, "error_code": None, "source_position_coverage": 0,
+            "source_path": None, "source_size_bytes": None, "source_sha256": None,
             "chunks": [],
         }
         try:
             if path is None:
                 raise ValueError("unsafe_fixture_path")
+            result["source_path"] = path.relative_to(root.resolve()).as_posix()
+            result["source_size_bytes"] = path.stat().st_size
+            result["source_sha256"] = file_sha256(path)
             if format_name not in {"markdown", "csv", "docx", "html"}:
                 raise ValueError("unsupported_type")
             if format_name == "csv":
@@ -84,6 +97,9 @@ def run(root: Path) -> dict:
                 "chunk_hash": c.chunk_hash,
                 "rule_version": c.rule_version,
                 "source_position": c.source_position,
+                "source_path": result["source_path"],
+                "source_size_bytes": result["source_size_bytes"],
+                "source_sha256": result["source_sha256"],
                 "token_count": max(1, len(c.content.split())),
             } for i, c in enumerate(chunks)]
         except UnicodeDecodeError:

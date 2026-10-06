@@ -29,7 +29,13 @@ def test_generated_html_fixture_joins_parser_and_chunk_reports(tmp_path: Path):
     assert html["parse_status"] == "PASS"
     assert html["element_count"] >= 6
     assert html["source_position_coverage"] == html["element_count"]
+    manifest_html = next(item for item in manifest["fixtures"] if item["fixture_id"] == "crawler-html-v1")
+    assert html["source_path"] == manifest_html["path"]
+    assert html["source_size_bytes"] == manifest_html["size_bytes"]
+    assert html["source_sha256"] == manifest_html["sha256"]
     assert {chunk["content_type"] for chunk in html["chunks"]} >= {"heading", "table", "image", "code"}
+    assert all(chunk["source_sha256"] == html["source_sha256"] for chunk in html["chunks"])
+    assert all(chunk["source_path"] == html["source_path"] for chunk in html["chunks"])
 
 
 def test_fixture_validator_rejects_unsafe_and_duplicate_manifest_paths(tmp_path: Path):
