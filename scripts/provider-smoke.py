@@ -11,9 +11,13 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import pathlib
 import sys
+import tempfile
 import time
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PYTHON = ROOT / "python"
@@ -109,6 +113,61 @@ def _usage_summary(value: object) -> dict[str, object]:
     }
 
 
+def _write_live_report(
+    output_path: pathlib.Path,
+    config_path: pathlib.Path,
+    config: object,
+    reports: list[dict[str, object]],
+    *,
+    generated_at: str | None = None,
+) -> dict[str, object]:
+    """Atomically persist only redacted metadata from a live smoke.
+
+    The provider config object contains the API key, so this function selects
+    fields explicitly instead of serializing it.  A temporary file in the
+    destination directory prevents readers from observing a partial report.
+    """
+    endpoint = getattr(config, "endpoint", "")
+    endpoint_host = urlsplit(endpoint).hostname if isinstance(endpoint, str) else None
+    statuses = [item.get("status") for item in reports]
+    report = {
+        "report_version": "provider-smoke-v3",
+        "generated_at_utc": generated_at
+        or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "profile": getattr(config, "profile", None),
+        "endpoint_host": endpoint_host,
+        "region": getattr(config, "region", None),
+        "embedding_dimensions": getattr(config, "embedding_dimensions", None),
+        "config_file_permissions": oct(config_path.stat().st_mode & 0o777)[2:].zfill(3),
+        "online_requests_made": True,
+        "raw_payload_saved": False,
+        "real_service_acceptance": False,
+        "m1_connected": False,
+        "overall_status": "PASS" if reports and all(status == "PASS" for status in statuses) else "FAIL",
+        "slots": reports,
+    }
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.", suffix=".tmp", dir=output_path.parent
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(report, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary_name, 0o600)
+        os.replace(temporary_name, output_path)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise
+    return report
+
+
 def validate_response_fixture(path: pathlib.Path) -> dict[str, object]:
     """Validate redacted provider smoke responses without retaining payloads."""
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -195,7 +254,9 @@ def validate_response_fixture(path: pathlib.Path) -> dict[str, object]:
     return {"slots": summary, "raw_payload_saved": False}
 
 
-async def _live_smoke(config_path: pathlib.Path) -> tuple[str, int]:
+async def _live_smoke(
+    config_path: pathlib.Path, output_path: pathlib.Path | None = None
+) -> tuple[str, int]:
     try:
         config = load_provider_config(config_path)
     except ProviderConfigError as exc:
@@ -285,10 +346,25 @@ async def _live_smoke(config_path: pathlib.Path) -> tuple[str, int]:
                 }
             )
     passed = all(report["status"] == "PASS" for report in reports)
+    persisted_report = None
+    if output_path is not None:
+        try:
+            persisted_report = _write_live_report(output_path, config_path, config, reports)
+        except (OSError, TypeError, ValueError) as exc:
+            print(f"REPORT_WRITE_FAIL {type(exc).__name__}")
+            return "REPORT_WRITE_FAIL", 5
     print(
         ("SMOKE_PASS" if passed else "SMOKE_FAIL")
         + " "
-        + json.dumps({"profile": config.profile, "slots": reports}, sort_keys=True)
+        + json.dumps(
+            {
+                "profile": config.profile,
+                "slots": reports,
+                "report_path": str(output_path) if persisted_report is not None else None,
+                "raw_payload_saved": False,
+            },
+            sort_keys=True,
+        )
     )
     return ("PASS" if passed else "FAIL"), (0 if passed else 4)
 
@@ -304,6 +380,11 @@ def main() -> int:
         type=pathlib.Path,
         help="validate a redacted offline response fixture; never contacts a provider",
     )
+    parser.add_argument(
+        "--output",
+        type=pathlib.Path,
+        help="write an atomic metadata-only report for a live smoke",
+    )
     args = parser.parse_args()
     if args.response_fixture:
         try:
@@ -315,7 +396,7 @@ def main() -> int:
         print("LIVE_NOT_RUN no network request was made")
         return 0
     if args.live:
-        _, exit_code = asyncio.run(_live_smoke(pathlib.Path(args.env)))
+        _, exit_code = asyncio.run(_live_smoke(pathlib.Path(args.env), args.output))
         return exit_code
     try:
         config = load_provider_config(pathlib.Path(args.env))

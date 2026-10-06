@@ -9,11 +9,12 @@ SPEC = importlib.util.spec_from_file_location("provider_smoke", PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+DEFAULT_USAGE = object()
 
 
 class ProviderSmokeFixtureTests(unittest.TestCase):
     class Result:
-        def __init__(self, model="model", request_id="request", usage=object()):
+        def __init__(self, model="model", request_id="request", usage=DEFAULT_USAGE):
             self.model = model
             self.request_id = request_id
             self.usage = usage
@@ -27,6 +28,44 @@ class ProviderSmokeFixtureTests(unittest.TestCase):
         self.assertTrue(metadata["usage_present"])
         self.assertEqual(len(metadata["model_fingerprint"]), 12)
         self.assertEqual(len(metadata["request_id_fingerprint"]), 12)
+
+    def test_live_report_is_redacted_and_atomic(self):
+        class Config:
+            profile = "aliyun-bailian"
+            endpoint = "https://dashscope.example.test/api"
+            region = "cn-beijing"
+            embedding_dimensions = 1024
+            api_key = "must-not-be-written"
+
+        reports = [
+            {
+                "slot": "control",
+                "status": "PASS",
+                "model_fingerprint": "a" * 12,
+                "request_id_fingerprint": "b" * 12,
+                "request_id_present": True,
+                "usage_present": True,
+                "metadata_complete": True,
+                "error_code": None,
+                "latency_ms": 1.0,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "providers.env"
+            config_path.write_text("DASHSCOPE_API_KEY=secret\n")
+            output = Path(directory) / "report.json"
+            report = MODULE._write_live_report(
+                output,
+                config_path,
+                Config(),
+                reports,
+                generated_at="2026-10-07T00:00:00Z",
+            )
+            payload = json.loads(output.read_text())
+            self.assertEqual(report, payload)
+            self.assertEqual(payload["overall_status"], "PASS")
+            self.assertNotIn("api_key", output.read_text())
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
 
     def test_live_metadata_rejects_missing_embedding_usage(self):
         metadata = MODULE._live_result_metadata(
