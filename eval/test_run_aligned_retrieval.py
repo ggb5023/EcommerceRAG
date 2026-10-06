@@ -400,3 +400,59 @@ def test_malformed_metadata_and_alignment_fail_input_integrity(tmp_path: Path) -
     alignment_result = _run_input_failure(tmp_path / "alignment", alignment=b"[]")
     assert alignment_result.returncode == 1
     assert "alignment must be a JSON object" in alignment_result.stdout
+
+
+def test_revision_root_selects_approved_revision_inputs(tmp_path: Path) -> None:
+    revision_root = tmp_path / "approved-revision"
+    revision_root.mkdir()
+    case = {
+        "case_id": "case-1",
+        "query": "蓝色收纳箱",
+        "expected_doc_ids": ["label-doc"],
+        "expected_answer_points": ["有资料支持"],
+        "authorization": {"tenant_id": "tenant-a", "shop_id": "shop-a", "role": "operator"},
+        "business_date": "2026-10-04",
+    }
+    cases_path = revision_root / "synthetic-m2-v1-revision-1.jsonl"
+    cases_path.write_text(json.dumps(case, ensure_ascii=False) + "\n", encoding="utf-8")
+    (revision_root / "synthetic-m2-v1-revision-1.metadata.json").write_text(
+        json.dumps({"eval_set_version": "synthetic-test-revision-1"}), encoding="utf-8"
+    )
+    corpus_path = revision_root / "documents.jsonl"
+    corpus_path.write_text(json.dumps({
+        "document_id": "actual-doc-v1",
+        "tenant_id": "tenant-a",
+        "shop_id": "shop-a",
+        "chunks": [{
+            "chunk_id": "chunk-1",
+            "content": "蓝色收纳箱",
+            "tenant_id": "tenant-a",
+            "shop_id": "shop-a",
+            "disclosure_class": "external_allowed",
+            "effective_from": "2026-01-01",
+            "effective_to": None,
+        }],
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    alignment = {
+        "status": "APPROVED",
+        "real_service_acceptance": False,
+        "case_to_source_documents": {"case-1": {"label-doc": "actual-doc-v1"}},
+        "case_evidence": {"case-1": [{
+            "source_document_id": "actual-doc-v1",
+            "evidence_chunks": [{"chunk_id": "chunk-1", "source_position": {"line_start": 1}}],
+        }]},
+        "source_corpus_sha256": hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
+    }
+    (revision_root / "alignment-revision-1.json").write_text(json.dumps(alignment), encoding="utf-8")
+    output = tmp_path / "report.json"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--revision-root", str(revision_root), "--output", str(output)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert result.stdout
+    assert report["status"] == "PASS"
+    assert report["eval_set_version"] == "synthetic-test-revision-1"
+    assert report["measured_case_count"] == 1

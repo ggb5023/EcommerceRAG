@@ -145,6 +145,21 @@ controlled artifacts are `alignment-revision-1.json`, its `PASS` validation
 report, and its deterministic retrieval report; earlier pending proposals are
 retained only as historical evidence.
 
+To reproduce the approved revision without accidentally selecting the older
+pending directory, pass its root explicitly:
+
+```bash
+python3 eval/run_aligned_retrieval.py \
+  --revision-root /var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned-provisional \
+  --output /var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned-provisional/retrieval-report-current.json
+```
+
+`--revision-root` selects the standard revision-1 cases, metadata, corpus, and
+approved alignment filenames as a single set. Explicit `--cases`, `--metadata`,
+`--corpus`, or `--alignment` arguments still override those defaults. Without
+the option, the runner retains the immutable baseline cases and the historical
+pending alignment path, so an unapproved mapping remains `NOT_RUN`.
+
 `alignment_policy.py` is the shared disclosure and effective-date policy
 check. Each source chunk must declare `external_allowed`, `internal_only`, or
 `unclassified`, plus tenant/shop scope and effective dates. Operator access to

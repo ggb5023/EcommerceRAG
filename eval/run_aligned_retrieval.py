@@ -212,18 +212,32 @@ def _acceptable_policy_refusal(case: dict, status: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     root = Path(__file__).resolve().parent
-    parser.add_argument("--cases", type=Path, default=root / "synthetic_cases.jsonl")
     parser.add_argument(
-        "--corpus",
+        "--revision-root",
         type=Path,
-        default=Path("/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned/documents.jsonl"),
+        help=(
+            "Use a controlled aligned revision directory. Unless explicitly supplied, "
+            "cases/metadata/corpus/alignment resolve to the revision's standard filenames."
+        ),
     )
+    parser.add_argument("--cases", type=Path)
+    parser.add_argument("--corpus", type=Path)
     parser.add_argument("--alignment", type=Path)
-    parser.add_argument("--metadata", type=Path, default=root / "synthetic_cases.metadata.json")
+    parser.add_argument("--metadata", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
-    alignment_path = args.alignment or args.corpus.with_name("alignment.json")
+    if args.revision_root is not None:
+        revision_root = args.revision_root
+        args.cases = args.cases or revision_root / "synthetic-m2-v1-revision-1.jsonl"
+        args.metadata = args.metadata or revision_root / "synthetic-m2-v1-revision-1.metadata.json"
+        args.corpus = args.corpus or revision_root / "documents.jsonl"
+        alignment_path = args.alignment or revision_root / "alignment-revision-1.json"
+    else:
+        args.cases = args.cases or root / "synthetic_cases.jsonl"
+        args.metadata = args.metadata or root / "synthetic_cases.metadata.json"
+        args.corpus = args.corpus or Path("/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned/documents.jsonl")
+        alignment_path = args.alignment or args.corpus.with_name("alignment.json")
     try:
         metadata = _load_object(args.metadata, "metadata")
         eval_set_version = metadata.get("eval_set_version", "synthetic-m2-v1")
