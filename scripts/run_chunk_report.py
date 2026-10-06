@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def file_sha256(path: Path) -> str:
@@ -42,6 +44,43 @@ def _source_path(root: Path, raw_path: object) -> Path | None:
         if current.is_symlink():
             return None
     return candidate
+
+
+def _validate_chunk_rows(label: str, chunks: list[object]) -> list[str]:
+    """Validate metadata needed to replay a chunk report without content."""
+    errors: list[str] = []
+    indexes: list[int] = []
+    for chunk_index, chunk in enumerate(chunks):
+        if not isinstance(chunk, dict):
+            continue
+        document_version_id = chunk.get("document_version_id")
+        if not isinstance(document_version_id, str) or not document_version_id:
+            errors.append(f"chunk_document_version_invalid:{label}:{chunk_index}")
+        source_position = chunk.get("source_position")
+        if not isinstance(source_position, dict) or not source_position:
+            errors.append(f"chunk_source_position_invalid:{label}:{chunk_index}")
+        chunk_hash = chunk.get("chunk_hash")
+        if not isinstance(chunk_hash, str) or not SHA256_RE.fullmatch(chunk_hash):
+            errors.append(f"chunk_hash_invalid:{label}:{chunk_index}")
+        for field, minimum in (
+            ("section_seq", 1),
+            ("section_chunk_index", 0),
+            ("chunk_index", 0),
+            ("token_count", 1),
+        ):
+            value = chunk.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                errors.append(f"chunk_field_invalid:{field}:{label}:{chunk_index}")
+        for field in ("content_type", "split_reason", "rule_version"):
+            value = chunk.get(field)
+            if not isinstance(value, str) or not value:
+                errors.append(f"chunk_field_invalid:{field}:{label}:{chunk_index}")
+        value = chunk.get("chunk_index")
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            indexes.append(value)
+    if sorted(indexes) != list(range(len(chunks))):
+        errors.append(f"chunk_index_sequence_invalid:{label}")
+    return errors
 
 
 def validate_source_traceability(data: object, root: Path) -> list[str]:
@@ -125,6 +164,7 @@ def validate_source_traceability(data: object, root: Path) -> list[str]:
             continue
         if isinstance(chunk_count, int) and not isinstance(chunk_count, bool) and chunk_count != len(chunks):
             errors.append(f"parse_report_count_mismatch:chunk_count:{label}")
+        errors.extend(_validate_chunk_rows(label, chunks))
         for chunk_index, chunk in enumerate(chunks):
             if not isinstance(chunk, dict):
                 errors.append(f"chunk_not_object:{label}:{chunk_index}")

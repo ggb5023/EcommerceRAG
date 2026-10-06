@@ -204,6 +204,42 @@ def test_chunk_report_rejects_chunk_source_binding_drift(tmp_path: Path, monkeyp
     assert f"chunk_source_mismatch:{fixture_id}:0" in output["errors"]
 
 
+def test_chunk_report_rejects_missing_chunk_rule_and_hash_metadata(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    passed = next(item for item in report["reports"] if item["parse_status"] == "PASS")
+    fixture_id = passed["fixture_id"]
+    passed["chunks"][0].pop("rule_version")
+    passed["chunks"][0]["chunk_hash"] = "not-a-hash"
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert f"chunk_field_invalid:rule_version:{fixture_id}:0" in output["errors"]
+    assert f"chunk_hash_invalid:{fixture_id}:0" in output["errors"]
+
+
+def test_chunk_report_rejects_chunk_position_and_index_drift(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    passed = next(item for item in report["reports"] if item["parse_status"] == "PASS")
+    fixture_id = passed["fixture_id"]
+    passed["chunks"][0]["source_position"] = {}
+    passed["chunks"][1]["chunk_index"] = 0
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert f"chunk_source_position_invalid:{fixture_id}:0" in output["errors"]
+    assert f"chunk_index_sequence_invalid:{fixture_id}" in output["errors"]
+
+
 def test_chunk_report_rejects_source_symlink_alias(tmp_path: Path, monkeypatch):
     root = tmp_path / "source-fixtures"
     build(root)
