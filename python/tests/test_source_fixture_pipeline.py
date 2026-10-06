@@ -213,3 +213,31 @@ def test_chunk_report_rejects_source_symlink_alias(tmp_path: Path, monkeypatch):
     output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
     assert output["status"] == "FAIL"
     assert f"source_path_unsafe:{fixture_id}" in output["errors"]
+
+
+def test_chunk_report_rejects_tampered_summary_counts(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    report["summary"]["passed"] += 1
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert "parse_report_summary_mismatch:passed" in output["errors"]
+
+
+def test_chunk_report_rejects_real_service_acceptance_flag(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    report = _write_parse_report(root)
+    report["real_service_acceptance"] = True
+    (root / "reports" / "parse-report.json").write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    output = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert output["status"] == "FAIL"
+    assert "real_service_acceptance_must_be_false" in output["errors"]

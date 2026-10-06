@@ -49,17 +49,19 @@ def validate_source_traceability(data: object, root: Path) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["parse_report_not_object"]
+    if data.get("real_service_acceptance") is not False:
+        errors.append("real_service_acceptance_must_be_false")
     reports = data.get("reports")
     if not isinstance(reports, list):
         return ["parse_report_reports_not_array"]
     summary = data.get("summary")
     if not isinstance(summary, dict):
-        errors = ["parse_report_summary_not_object"]
+        errors.append("parse_report_summary_not_object")
     else:
-        errors = []
         for field in ("fixtures", "passed", "expected_failures", "mismatches"):
             if isinstance(summary.get(field), bool) or not isinstance(summary.get(field), int):
                 errors.append(f"parse_report_summary_invalid:{field}")
+    seen_fixture_ids: set[str] = set()
     for report_index, report in enumerate(reports):
         if not isinstance(report, dict):
             errors.append(f"report_not_object:{report_index}")
@@ -68,6 +70,10 @@ def validate_source_traceability(data: object, root: Path) -> list[str]:
         if not isinstance(fixture_id, str) or not fixture_id:
             errors.append(f"report_fixture_id_invalid:{report_index}")
             fixture_id = f"<report-{report_index}>"
+        elif fixture_id in seen_fixture_ids:
+            errors.append(f"report_fixture_id_duplicate:{fixture_id}")
+        else:
+            seen_fixture_ids.add(fixture_id)
         if report.get("parse_status") not in {"PASS", "FAILED"}:
             errors.append(f"report_parse_status_invalid:{fixture_id}")
             continue
@@ -106,6 +112,22 @@ def validate_source_traceability(data: object, root: Path) -> list[str]:
                 or chunk.get("source_sha256") != reported_sha
             ):
                 errors.append(f"chunk_source_mismatch:{label}:{chunk_index}")
+    if isinstance(summary, dict) and not errors:
+        actual = {
+            "fixtures": len(reports),
+            "passed": sum(item.get("parse_status") == "PASS" for item in reports if isinstance(item, dict)),
+            "expected_failures": sum(
+                item.get("expected_parse_status") == "expected_failure"
+                for item in reports if isinstance(item, dict)
+            ),
+            "mismatches": sum(
+                item.get("expectation_status") == "MISMATCH"
+                for item in reports if isinstance(item, dict)
+            ),
+        }
+        for field, value in actual.items():
+            if summary.get(field) != value:
+                errors.append(f"parse_report_summary_mismatch:{field}")
     return errors
 
 
