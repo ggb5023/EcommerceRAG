@@ -11,13 +11,20 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from validate_public_sources import file_sha256, validate_manifest
+from validate_public_sources import (
+    InputIntegrityError,
+    file_sha256,
+    load_json_value,
+    strict_json_loads,
+    validate_manifest,
+)
 
 PIPELINE_VERSION = "public-product-baseline-v1"
 DEFAULT_MAPPING = {
@@ -34,7 +41,7 @@ def stable_hash(payload: Any) -> str:
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = load_json_value(path, "manifest")
     errors = validate_manifest(payload)
     if errors:
         raise ValueError("invalid public source manifest: " + "; ".join(errors))
@@ -44,18 +51,36 @@ def load_manifest(path: Path) -> dict[str, Any]:
 def load_records(path: Path) -> list[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        with path.open(newline="", encoding="utf-8") as stream:
-            return [dict(row) for row in csv.DictReader(stream)]
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise InputIntegrityError(f"public input is not valid UTF-8: {error}") from error
+        except OSError as error:
+            raise InputIntegrityError(f"public input cannot be read: {error}") from error
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        if not reader.fieldnames or any(not isinstance(name, str) or not name for name in reader.fieldnames):
+            raise InputIntegrityError("CSV header is missing or contains an empty field")
+        if len(reader.fieldnames) != len(set(reader.fieldnames)):
+            raise InputIntegrityError("CSV header contains duplicate fields")
+        records: list[dict[str, Any]] = []
+        for line_number, row in enumerate(reader, 2):
+            if None in row:
+                raise InputIntegrityError(f"CSV row {line_number} has extra fields")
+            records.append(dict(row))
+        return records
     records: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise InputIntegrityError(f"public input is not valid UTF-8: {error}") from error
+    except OSError as error:
+        raise InputIntegrityError(f"public input cannot be read: {error}") from error
+    for line_number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
             continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid JSONL at line {line_number}: {exc}") from exc
+        row = strict_json_loads(line, f"public input line {line_number}")
         if not isinstance(row, dict):
-            raise TypeError(f"record at line {line_number} must be an object")
+            raise InputIntegrityError(f"public input line {line_number} must be a JSON object")
         records.append(row)
     return records
 
@@ -207,9 +232,9 @@ def report_for_source(manifest: dict[str, Any], source_id: str, input_path: Path
         return report
     mapping = DEFAULT_MAPPING
     if mapping_path is not None:
-        supplied = json.loads(mapping_path.read_text(encoding="utf-8"))
+        supplied = load_json_value(mapping_path, "mapping")
         if not isinstance(supplied, dict):
-            raise ValueError("mapping must be a JSON object")
+            raise InputIntegrityError("mapping must be a JSON object")
         mapping = {key: [str(value)] if isinstance(value, str) else value for key, value in {**DEFAULT_MAPPING, **supplied}.items()}
         if any(key not in mapping or not isinstance(mapping[key], list) or not mapping[key] for key in DEFAULT_MAPPING):
             raise ValueError("mapping must provide non-empty field name lists")
@@ -241,6 +266,9 @@ def main() -> int:
     try:
         manifest = load_manifest(args.manifest)
         report = report_for_source(manifest, args.source_id, args.input, args.mapping, root.parent)
+    except InputIntegrityError as exc:
+        print(f"FAIL input_integrity: {exc}")
+        return 1
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"FAIL {exc}")
         return 1

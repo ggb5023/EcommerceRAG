@@ -72,6 +72,38 @@ REQUIRED_FORBIDDEN_USE = {
 }
 
 
+class InputIntegrityError(ValueError):
+    """Raised when a public-source JSON input cannot be parsed safely."""
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise InputIntegrityError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def strict_json_loads(text: str, label: str) -> Any:
+    try:
+        return json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+    except InputIntegrityError as error:
+        raise InputIntegrityError(f"{label}: {error}") from error
+    except json.JSONDecodeError as error:
+        raise InputIntegrityError(f"{label} invalid JSON: {error}") from error
+
+
+def load_json_value(path: Path, label: str) -> Any:
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise InputIntegrityError(f"{label} is not valid UTF-8: {error}") from error
+    except OSError as error:
+        raise InputIntegrityError(f"{label} cannot be read: {error}") from error
+    return strict_json_loads(text, label)
+
+
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -190,9 +222,9 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=default)
     args = parser.parse_args()
     try:
-        payload = json.loads(args.manifest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"FAIL cannot read manifest: {exc}")
+        payload = load_json_value(args.manifest, "manifest")
+    except InputIntegrityError as exc:
+        print(f"FAIL input_integrity: {exc}")
         return 1
     errors = validate_manifest(payload)
     if errors:

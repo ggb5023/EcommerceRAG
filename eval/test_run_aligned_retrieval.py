@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -328,3 +328,75 @@ def test_document_ranking_deduplicates_chunks_before_ndcg(tmp_path: Path) -> Non
     assert report["status"] == "PASS"
     assert report["case_results"][0]["result_document_ids"] == ["actual-doc-v1"]
     assert report["metrics"]["ndcg_at_5"] == 1.0
+
+
+def _run_input_failure(
+    tmp_path: Path,
+    *,
+    cases: bytes | None = None,
+    corpus: bytes | None = None,
+    metadata: bytes | None = None,
+    alignment: bytes | None = None,
+) -> subprocess.CompletedProcess[str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    cases_path = tmp_path / "cases.jsonl"
+    corpus_path = tmp_path / "documents.jsonl"
+    metadata_path = tmp_path / "metadata.json"
+    alignment_path = tmp_path / "alignment.json"
+    cases_path.write_bytes(cases or b'{"case_id":"case-1","query":"q","expected_doc_ids":["d"],"expected_answer_points":["p"],"authorization":{"tenant_id":"t","shop_id":"s","role":"operator"},"business_date":"2026-10-04"}\n')
+    corpus_path.write_bytes(corpus or b'{"document_id":"d","tenant_id":"t","shop_id":"s","chunks":[]}\n')
+    metadata_path.write_bytes(metadata or b'{"eval_set_version":"test-v1"}')
+    alignment_path.write_bytes(alignment or b'{"status":"PENDING_REVIEW","case_to_source_documents":{},"real_service_acceptance":false}')
+    output = tmp_path / "report.json"
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--cases",
+            str(cases_path),
+            "--corpus",
+            str(corpus_path),
+            "--metadata",
+            str(metadata_path),
+            "--alignment",
+            str(alignment_path),
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_malformed_cases_fail_input_integrity_without_report(tmp_path: Path) -> None:
+    result = _run_input_failure(tmp_path, cases=b'{"case_id":"a","case_id":"b"}\n')
+    assert result.returncode == 1
+    assert result.stdout.startswith("FAIL input_integrity:")
+    assert "duplicate JSON key" in result.stdout
+    assert not (tmp_path / "report.json").exists()
+
+
+def test_invalid_utf8_corpus_fails_input_integrity_without_report(tmp_path: Path) -> None:
+    result = _run_input_failure(tmp_path, corpus=b"{\xff\n")
+    assert result.returncode == 1
+    assert result.stdout.startswith("FAIL input_integrity:")
+    assert "not valid UTF-8" in result.stdout
+    assert not (tmp_path / "report.json").exists()
+
+
+def test_non_object_corpus_row_fails_input_integrity_without_report(tmp_path: Path) -> None:
+    result = _run_input_failure(tmp_path, corpus=b"[]\n")
+    assert result.returncode == 1
+    assert result.stdout.startswith("FAIL input_integrity:")
+    assert "must be a JSON object" in result.stdout
+    assert not (tmp_path / "report.json").exists()
+
+
+def test_malformed_metadata_and_alignment_fail_input_integrity(tmp_path: Path) -> None:
+    metadata_result = _run_input_failure(tmp_path / "metadata", metadata=b'{"eval_set_version":"a","eval_set_version":"b"}')
+    assert metadata_result.returncode == 1
+    assert "duplicate JSON key" in metadata_result.stdout
+    alignment_result = _run_input_failure(tmp_path / "alignment", alignment=b"[]")
+    assert alignment_result.returncode == 1
+    assert "alignment must be a JSON object" in alignment_result.stdout

@@ -35,6 +35,13 @@ restricted to product metadata/text parsing, mapping, deduplication, and text
 retrieval experiments. Neither source is merchant policy, price, inventory,
 order, permission, or customer-reply truth.
 
+The public-source manifest, mapping, JSONL, and CSV inputs use strict UTF-8
+parsing. Duplicate JSON keys, malformed JSON, non-object JSONL rows, invalid
+encoding, duplicate CSV headers, and CSV rows with extra fields fail as
+`FAIL input_integrity` before a report is written. A pending source remains
+`NOT_RUN` only when its manifest is structurally valid but its revision,
+license/terms, or restricted download is not verified.
+
 The authoritative source and responsibility matrix is in
 `.local/dev-docs/docs/数据来源与评测输入.md`. Codex owns synthetic dataset
 construction, evaluation review, public-source/license checks, heuristic UX

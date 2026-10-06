@@ -11,8 +11,12 @@ import re
 from datetime import date
 from pathlib import Path
 
-from alignment_policy import assess_document
 from alignment_artifact import approved_artifact_issues
+from alignment_policy import assess_document
+
+
+class InputIntegrityError(ValueError):
+    """Raised when an evaluator input cannot be parsed safely."""
 
 
 def tokens(value: str) -> set[str]:
@@ -28,8 +32,115 @@ def tokens(value: str) -> set[str]:
     return result
 
 
-def _load_lines(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate keys instead of silently accepting the last value."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise InputIntegrityError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _read_utf8(path: Path, label: str) -> str:
+    try:
+        return path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise InputIntegrityError(f"{label} is not valid UTF-8: {error}") from error
+    except OSError as error:
+        raise InputIntegrityError(f"{label} cannot be read: {error}") from error
+
+
+def _load_lines(path: Path, label: str) -> list[dict]:
+    rows: list[dict] = []
+    for line_number, line in enumerate(_read_utf8(path, label).splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys)
+        except InputIntegrityError as error:
+            raise InputIntegrityError(f"{label} line {line_number}: {error}") from error
+        except json.JSONDecodeError as error:
+            raise InputIntegrityError(f"{label} line {line_number} invalid JSON: {error}") from error
+        if not isinstance(value, dict):
+            raise InputIntegrityError(f"{label} line {line_number} must be a JSON object")
+        rows.append(value)
+    return rows
+
+
+def _load_object(path: Path, label: str) -> dict:
+    text = _read_utf8(path, label)
+    try:
+        value = json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+    except InputIntegrityError:
+        raise
+    except json.JSONDecodeError as error:
+        raise InputIntegrityError(f"{label} invalid JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise InputIntegrityError(f"{label} must be a JSON object")
+    return value
+
+
+def _validate_case_shapes(cases: list[dict]) -> None:
+    issues: list[str] = []
+    for number, case in enumerate(cases, 1):
+        case_id = case.get("case_id")
+        if not isinstance(case_id, str) or not case_id:
+            issues.append(f"case {number} case_id must be a non-empty string")
+        if not isinstance(case.get("query"), str):
+            issues.append(f"case {number} query must be a string")
+        expected_ids = case.get("expected_doc_ids")
+        if not isinstance(expected_ids, list) or not expected_ids or not all(
+            isinstance(value, str) and value for value in expected_ids
+        ):
+            issues.append(f"case {number} expected_doc_ids must be a non-empty string list")
+        answer_points = case.get("expected_answer_points")
+        if not isinstance(answer_points, list) or not answer_points or not all(
+            isinstance(value, str) and value for value in answer_points
+        ):
+            issues.append(f"case {number} expected_answer_points must be a non-empty string list")
+        authorization = case.get("authorization")
+        if not isinstance(authorization, dict) or not all(
+            isinstance(authorization.get(field), str) and authorization[field]
+            for field in ("tenant_id", "shop_id", "role")
+        ):
+            issues.append(f"case {number} authorization is incomplete")
+        business_date = case.get("business_date")
+        if not isinstance(business_date, str):
+            issues.append(f"case {number} business_date must be a string")
+        else:
+            try:
+                date.fromisoformat(business_date)
+            except ValueError:
+                issues.append(f"case {number} business_date is invalid")
+    if issues:
+        raise InputIntegrityError("; ".join(issues[:8]))
+
+
+def _validate_corpus_shapes(corpus: list[dict]) -> None:
+    issues: list[str] = []
+    for number, document in enumerate(corpus, 1):
+        document_id = document.get("document_id")
+        if not isinstance(document_id, str) or not document_id:
+            issues.append(f"corpus document {number} document_id must be a non-empty string")
+        if not all(isinstance(document.get(field), str) and document[field] for field in ("tenant_id", "shop_id")):
+            issues.append(f"corpus document {number} scope is incomplete")
+        chunks = document.get("chunks")
+        if not isinstance(chunks, list):
+            issues.append(f"corpus document {number} chunks must be a list")
+            continue
+        for chunk_number, chunk in enumerate(chunks, 1):
+            if not isinstance(chunk, dict):
+                issues.append(f"corpus document {number} chunk {chunk_number} must be an object")
+                continue
+            if not isinstance(chunk.get("chunk_id"), str) or not chunk["chunk_id"]:
+                issues.append(f"corpus document {number} chunk {chunk_number} chunk_id is invalid")
+            if not isinstance(chunk.get("content"), str):
+                issues.append(f"corpus document {number} chunk {chunk_number} content must be a string")
+            if chunk.get("tenant_id") != document.get("tenant_id") or chunk.get("shop_id") != document.get("shop_id"):
+                issues.append(f"corpus document {number} chunk {chunk_number} scope mismatch")
+    if issues:
+        raise InputIntegrityError("; ".join(issues[:8]))
 
 
 def _not_run_report(cases_path: Path, corpus_path: Path, alignment_path: Path,
@@ -114,37 +225,18 @@ def main() -> int:
 
     alignment_path = args.alignment or args.corpus.with_name("alignment.json")
     try:
-        metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
+        metadata = _load_object(args.metadata, "metadata")
         eval_set_version = metadata.get("eval_set_version", "synthetic-m2-v1")
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        eval_set_version = "synthetic-m2-v1"
-    try:
-        cases = _load_lines(args.cases)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        report = _not_run_report(args.cases, args.corpus, alignment_path,
-                                 issues=[f"cases_input_invalid:{type(error).__name__}"],
-                                 eval_set_version=eval_set_version)
-        if args.output:
-            args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print(json.dumps({key: report[key] for key in ("status", "case_count", "measured_case_count", "metrics", "real_service_acceptance")}))
-        return 0
-    try:
-        corpus = _load_lines(args.corpus)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        report = _not_run_report(args.cases, args.corpus, alignment_path,
-                                 issues=[f"corpus_input_invalid:{type(error).__name__}"], case_count=len(cases),
-                                 eval_set_version=eval_set_version)
-        if args.output:
-            args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print(json.dumps({key: report[key] for key in ("status", "case_count", "measured_case_count", "metrics", "real_service_acceptance")}))
-        return 0
-    try:
-        alignment = json.loads(alignment_path.read_text(encoding="utf-8")) if alignment_path.exists() else {}
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        alignment = {}
-        alignment_error = f"alignment_input_invalid:{type(error).__name__}"
-    else:
-        alignment_error = None
+        if not isinstance(eval_set_version, str) or not eval_set_version:
+            raise InputIntegrityError("metadata eval_set_version must be a non-empty string")
+        cases = _load_lines(args.cases, "cases")
+        corpus = _load_lines(args.corpus, "corpus")
+        _validate_case_shapes(cases)
+        _validate_corpus_shapes(corpus)
+        alignment = _load_object(alignment_path, "alignment") if alignment_path.exists() else {}
+    except InputIntegrityError as error:
+        print(f"FAIL input_integrity: {error}")
+        return 1
     corpus_ids = [doc.get("document_id") for doc in corpus if isinstance(doc, dict)]
     duplicate_corpus_ids = sorted({doc_id for doc_id in corpus_ids if doc_id and corpus_ids.count(doc_id) > 1})
     corpus_by_id = {
@@ -156,8 +248,6 @@ def main() -> int:
     rows: list[dict] = []
     issues: list[str] = []
     refusal_counts: collections.Counter = collections.Counter()
-    if alignment_error:
-        issues.append(alignment_error)
     if duplicate_corpus_ids:
         issues.append("duplicate_corpus_document_id:" + ",".join(duplicate_corpus_ids))
     if not isinstance(mapping, dict):
@@ -169,7 +259,7 @@ def main() -> int:
         if approval_issues:
             approved = False
             input_invalid = True
-    input_invalid = bool(alignment_error or duplicate_corpus_ids or "alignment_case_to_source_documents_not_object" in issues)
+    input_invalid = bool(duplicate_corpus_ids or "alignment_case_to_source_documents_not_object" in issues)
     if not approved:
         status = alignment.get("status") if isinstance(alignment, dict) else None
         if status == "PENDING_REVIEW":
