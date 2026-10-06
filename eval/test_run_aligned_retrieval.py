@@ -15,6 +15,7 @@ def _run(
     *,
     case: dict | None = None,
     chunk: dict | None = None,
+    preserve_source_hash: bool = False,
 ) -> dict:
     tmp_path.mkdir(parents=True, exist_ok=True)
     cases = [case or {
@@ -56,7 +57,7 @@ def _run(
             case["case_id"]: [{"source_document_id": source_id, "evidence_chunks": [{"chunk_id": "chunk-1", "source_position": {"line_start": 1}}]}]
             for case in cases
         }
-    if alignment.get("status") == "APPROVED" and had_evidence:
+    if alignment.get("status") == "APPROVED" and had_evidence and not preserve_source_hash:
         alignment["source_corpus_sha256"] = hashlib.sha256(corpus_path.read_bytes()).hexdigest()
     alignment_path.write_text(json.dumps(alignment), encoding="utf-8")
     report_path = tmp_path / "report.json"
@@ -124,6 +125,24 @@ def test_tampered_approved_evidence_never_measures(tmp_path: Path) -> None:
     assert report["status"] == "NOT_RUN"
     assert report["measured_case_count"] == 0
     assert "approved_case_evidence_case_set_mismatch" in report["issues"]
+    assert report["case_results"][0]["reason"] == "input_integrity"
+
+
+def test_tampered_approved_corpus_is_reported_as_input_integrity(tmp_path: Path) -> None:
+    report = _run(tmp_path, {
+        "status": "APPROVED",
+        "case_to_source_documents": {"case-1": {"label-doc": "actual-doc-v1"}},
+        "real_service_acceptance": False,
+        "source_corpus_sha256": "0" * 64,
+        "case_evidence": {"case-1": [{
+            "source_document_id": "actual-doc-v1",
+            "evidence_chunks": [{"chunk_id": "chunk-1", "source_position": {"line_start": 1}}],
+    }]},
+    }, preserve_source_hash=True)
+    assert report["status"] == "NOT_RUN"
+    assert report["measured_case_count"] == 0
+    assert "approved_source_corpus_sha256_mismatch" in report["issues"]
+    assert report["case_results"][0]["reason"] == "input_integrity"
 
 
 def test_approved_empty_mapping_stays_not_run(tmp_path: Path) -> None:
