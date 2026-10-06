@@ -201,3 +201,21 @@ The current isolated report is outside the repository at
 It is `real_service_acceptance=false` and `model_quality_claim=false`. A
 successful transport and retrieval ranking run does not approve model quality,
 answer quality, real merchant data, identity, or online customer service.
+
+## Isolated Bailian pgvector evaluation
+
+`run_bailian_pgvector.py` is an explicit embedding-to-database experiment.
+Without `--live` it reports `NOT_RUN` and makes no network or database request.
+With `--live`, it requires `/etc/ecommerce-rag/m1-review.env` (or an explicit
+`--db-env`) to name an `ecr_m1_test_*` database and the non-superuser
+`rag_app`. It embeds only the approved synthetic aligned corpus, inserts
+vectors into PostgreSQL TEMP tables, applies tenant/shop, `external_allowed`,
+and business-date filters, emits metadata-only top-5 results, and rolls back
+the transaction. The report never stores vectors, document text, prompts,
+credentials, or customer data. This proves an isolated provider/database
+contract only; it is not persistent vector quality, M1 integration, or real
+M2 service acceptance.
+
+The current report is outside the repository at
+`/var/lib/ecommerce-rag/real-docs/reports/bailian-pgvector-current.json` and
+has `real_service_acceptance=false`.
