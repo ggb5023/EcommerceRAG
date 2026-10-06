@@ -47,7 +47,9 @@ until the prototype is runnable and a real trial is planned.
 policy, factual, freshness, refusal, multi-turn, and authorization scenarios.
 `validate_eval.py` is read-only by default: it checks fields, coverage,
 non-placeholder semantics, dates, source versions, and SHA-256. Passing
-`--review-output` explicitly writes a separate checklist whose 60 rows start
+JSONL rows must be objects with unique keys; duplicate keys, non-object rows,
+invalid UTF-8, malformed JSON, and malformed metadata fail closed with
+input-integrity errors. `--review-output` explicitly writes a separate checklist whose 60 rows start
 with `review_status=pending`; the checklist never changes the JSONL hash. The
 default `--review` check verifies that checklist IDs and copied evidence fields
 still match the immutable JSONL and that statuses are one of `pending`,
@@ -72,7 +74,9 @@ content.
 
 `run_mock_retrieval.py` produces a read-only deterministic baseline summary,
 validates the input SHA-256, and reports retrieval, evidence coverage, refusal,
-unauthorized, and multi-turn classification counts. `--include-cases` adds
+unauthorized, and multi-turn classification counts. It rejects duplicate JSON
+keys, non-object JSONL rows, invalid UTF-8, and malformed metadata before
+producing a report. `--include-cases` adds
 metadata-only per-case results (case ID, classification, tags, authorization
 scope, and expected evidence count); it never emits query or answer text.
 By default no synthetic document index is assumed, so retrieval hit rate and
