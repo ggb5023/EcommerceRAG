@@ -40,6 +40,7 @@ def test_sql_has_scope_date_disclosure_filters_and_rollback():
     chunk = {
         "chunk_id": "chunk-1",
         "document_id": "doc-1",
+        "document_version_id": "version-1",
         "tenant_id": "tenant-a",
         "shop_id": "shop-a",
         "disclosure_class": "external_allowed",
@@ -56,12 +57,20 @@ def test_sql_has_scope_date_disclosure_filters_and_rollback():
     assert "c.disclosure_class = 'external_allowed'" in sql
     assert "c.effective_to > q.business_date" in sql
     assert sql.rstrip().endswith("ROLLBACK;")
+    assert "document_version_id text NOT NULL" in sql
+    assert "version-1" in sql
+    assert "c.document_version_id" in sql
     assert "chunk-1" in sql
 
 
 def test_parse_rank_rows_is_metadata_only():
-    rows = MODULE.parse_rank_rows("syn-001\tdoc-1:chunk-1:1,doc-2:chunk-2:2\n")
-    assert rows["syn-001"][0] == {"document_id": "doc-1", "chunk_id": "chunk-1", "rank": 1}
+    rows = MODULE.parse_rank_rows("syn-001\tdoc-1:version-1:chunk-1:1,doc-2:version-2:chunk-2:2\n")
+    assert rows["syn-001"][0] == {
+        "document_id": "doc-1",
+        "document_version_id": "version-1",
+        "chunk_id": "chunk-1",
+        "rank": 1,
+    }
     assert all("content" not in row for row in rows["syn-001"])
 
 
@@ -77,7 +86,7 @@ def test_run_live_uses_psql_without_persisting_content():
 
     def fake_psql(args, **kwargs):
         captured["sql"] = kwargs["input"]
-        return subprocess.CompletedProcess(args, 0, "case-1\tdoc-1:chunk-1:1\n", "")
+        return subprocess.CompletedProcess(args, 0, "case-1\tdoc-1:version-1:chunk-1:1\n", "")
 
     cases = [{
         "case_id": "case-1",
@@ -88,11 +97,13 @@ def test_run_live_uses_psql_without_persisting_content():
     }]
     corpus = [{
         "document_id": "doc-1",
+        "document_version_id": "version-1",
         "tenant_id": "tenant-a",
         "shop_id": "shop-a",
         "chunks": [{
             "chunk_id": "chunk-1",
             "document_id": "doc-1",
+            "document_version_id": "version-1",
             "tenant_id": "tenant-a",
             "shop_id": "shop-a",
             "content": "secret source content",
@@ -113,3 +124,20 @@ def test_run_live_uses_psql_without_persisting_content():
     assert result["transaction_rolled_back"] is True
     assert "secret source content" not in captured["sql"]
     assert "secret source content" not in json.dumps(result)
+
+
+def test_corpus_version_mismatch_is_rejected():
+    issues = MODULE.validate_corpus_versions([{
+        "document_id": "doc-1",
+        "document_version_id": "version-1",
+        "tenant_id": "tenant-a",
+        "shop_id": "shop-a",
+        "chunks": [{
+            "chunk_id": "chunk-1",
+            "document_id": "doc-1",
+            "document_version_id": "version-2",
+            "tenant_id": "tenant-a",
+            "shop_id": "shop-a",
+        }],
+    }])
+    assert issues == ["corpus_chunk_version_mismatch:chunk-1"]

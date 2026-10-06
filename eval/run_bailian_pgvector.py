@@ -46,6 +46,7 @@ from run_bailian_retrieval import (
     load_inputs,
     select_cases,
     sha256,
+    validate_corpus_versions,
 )
 
 DEFAULT_DB_ENV = Path("/etc/ecommerce-rag/m1-review.env")
@@ -116,7 +117,8 @@ def build_sql(
     lines = [
         "BEGIN;",
         "CREATE TEMP TABLE provider_eval_chunks (",
-        "  chunk_id text PRIMARY KEY, document_id text NOT NULL, tenant_id text NOT NULL,",
+        "  chunk_id text PRIMARY KEY, document_id text NOT NULL, document_version_id text NOT NULL,",
+        "  tenant_id text NOT NULL,",
         "  shop_id text NOT NULL, disclosure_class text NOT NULL, effective_from date,",
         "  effective_to date, embedding halfvec(1024) NOT NULL",
         ") ON COMMIT DROP;",
@@ -131,11 +133,12 @@ def build_sql(
             raise ValueError("non_external_chunk_passed_to_db")
         lines.append(
             "INSERT INTO provider_eval_chunks "
-            "(chunk_id, document_id, tenant_id, shop_id, disclosure_class, effective_from, effective_to, embedding) VALUES ("
+            "(chunk_id, document_id, document_version_id, tenant_id, shop_id, disclosure_class, effective_from, effective_to, embedding) VALUES ("
             + ", ".join(
                 (
                     _sql_literal(chunk.get("chunk_id")),
                     _sql_literal(chunk.get("document_id")),
+                    _sql_literal(chunk.get("document_version_id")),
                     _sql_literal(chunk.get("tenant_id")),
                     _sql_literal(chunk.get("shop_id")),
                     _sql_literal(disclosure),
@@ -166,10 +169,10 @@ def build_sql(
         )
     lines.extend(
         [
-            "SELECT q.case_id, COALESCE(string_agg(r.document_id || ':' || r.chunk_id || ':' || r.rank::text, ',' ORDER BY r.rank), '')",
+            "SELECT q.case_id, COALESCE(string_agg(r.document_id || ':' || r.document_version_id || ':' || r.chunk_id || ':' || r.rank::text, ',' ORDER BY r.rank), '')",
             "FROM provider_eval_queries q",
             "LEFT JOIN LATERAL (",
-            "  SELECT c.document_id, c.chunk_id, row_number() OVER (ORDER BY c.embedding <=> q.embedding, c.chunk_id) AS rank",
+            "  SELECT c.document_id, c.document_version_id, c.chunk_id, row_number() OVER (ORDER BY c.embedding <=> q.embedding, c.chunk_id) AS rank",
             "  FROM provider_eval_chunks c",
             "  WHERE c.tenant_id = q.tenant_id AND c.shop_id = q.shop_id",
             "    AND c.disclosure_class = 'external_allowed'",
@@ -197,8 +200,13 @@ def parse_rank_rows(stdout: str) -> dict[str, list[dict[str, Any]]]:
         rows: list[dict[str, Any]] = []
         if packed:
             for item in packed.split(","):
-                document_id, chunk_id, rank_text = item.split(":", 2)
-                rows.append({"document_id": document_id, "chunk_id": chunk_id, "rank": int(rank_text)})
+                document_id, document_version_id, chunk_id, rank_text = item.split(":", 3)
+                rows.append({
+                    "document_id": document_id,
+                    "document_version_id": document_version_id,
+                    "chunk_id": chunk_id,
+                    "rank": int(rank_text),
+                })
         result[case_id] = rows
     return result
 
@@ -313,6 +321,7 @@ async def run_live(
         "case_results": case_results,
         "candidate_count": len(selected_chunks),
         "embedding_dimension": 1024,
+        "document_version_binding": True,
         "transaction_rolled_back": True,
         "database_requests_made": True,
     }

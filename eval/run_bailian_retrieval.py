@@ -110,7 +110,46 @@ def load_inputs(
         issues.append("corpus_document_id_invalid")
     if len(corpus_ids) != len(set(corpus_ids)):
         issues.append("duplicate_corpus_document_id")
+    issues.extend(validate_corpus_versions(corpus))
     return cases, corpus, alignment, issues
+
+
+def validate_corpus_versions(corpus: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Require every chunk to remain bound to its document version and scope."""
+    issues: list[str] = []
+    seen_chunks: set[str] = set()
+    for document in corpus:
+        document_id = document.get("document_id")
+        version_id = document.get("document_version_id")
+        tenant_id = document.get("tenant_id")
+        shop_id = document.get("shop_id")
+        if not isinstance(version_id, str) or not version_id:
+            issues.append(f"corpus_document_version_id_invalid:{document_id or '<missing>'}")
+            continue
+        if not isinstance(tenant_id, str) or not tenant_id or not isinstance(shop_id, str) or not shop_id:
+            issues.append(f"corpus_document_scope_invalid:{document_id or '<missing>'}")
+        chunks = document.get("chunks", [])
+        if not isinstance(chunks, list):
+            issues.append(f"corpus_chunks_invalid:{document_id or '<missing>'}")
+            continue
+        for chunk in chunks:
+            if not isinstance(chunk, Mapping):
+                issues.append(f"corpus_chunk_invalid:{document_id or '<missing>'}")
+                continue
+            chunk_id = chunk.get("chunk_id")
+            if not isinstance(chunk_id, str) or not chunk_id:
+                issues.append(f"corpus_chunk_id_invalid:{document_id or '<missing>'}")
+            elif chunk_id in seen_chunks:
+                issues.append(f"duplicate_corpus_chunk_id:{chunk_id}")
+            else:
+                seen_chunks.add(chunk_id)
+            if chunk.get("document_id") != document_id:
+                issues.append(f"corpus_chunk_document_mismatch:{chunk_id or '<missing>'}")
+            if chunk.get("document_version_id") != version_id:
+                issues.append(f"corpus_chunk_version_mismatch:{chunk_id or '<missing>'}")
+            if chunk.get("tenant_id") != tenant_id or chunk.get("shop_id") != shop_id:
+                issues.append(f"corpus_chunk_scope_mismatch:{chunk_id or '<missing>'}")
+    return sorted(set(issues))
 
 
 def select_cases(cases: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -169,7 +208,12 @@ def _rank_by_embedding(
         key=lambda item: (-cosine(query_embedding, item[1]), str(item[0].get("chunk_id", ""))),
     )
     return [
-        {"chunk_id": chunk.get("chunk_id"), "document_id": chunk.get("document_id"), "score": round(cosine(query_embedding, vector), 8)}
+        {
+            "chunk_id": chunk.get("chunk_id"),
+            "document_id": chunk.get("document_id"),
+            "document_version_id": chunk.get("document_version_id"),
+            "score": round(cosine(query_embedding, vector), 8),
+        }
         for chunk, vector in ranked[:limit]
     ]
 
@@ -182,6 +226,7 @@ def _rank_by_rerank(result: Any, candidates: Sequence[dict[str, Any]]) -> list[d
             rows.append({
                 "chunk_id": candidate.get("chunk_id"),
                 "document_id": candidate.get("document_id"),
+                "document_version_id": candidate.get("document_version_id"),
                 "score": round(float(item.score), 8),
             })
     return rows
