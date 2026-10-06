@@ -38,7 +38,22 @@ def load_cases(path: Path, expected_sha: str | None) -> list[dict]:
     actual = hashlib.sha256(raw).hexdigest()
     if expected_sha and actual != expected_sha:
         raise ValueError(f"cases sha256 mismatch: {actual}")
-    return [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"cases are not valid UTF-8: {exc}") from exc
+    cases: list[dict] = []
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            case = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"case {line_number} invalid JSON: {exc}") from exc
+        if not isinstance(case, dict):
+            raise TypeError(f"case {line_number} must be a JSON object")
+        cases.append(case)
+    return cases
 
 
 def evaluate_cases(cases: list[dict]) -> tuple[collections.Counter, collections.Counter, list[str]]:
@@ -238,8 +253,17 @@ def main() -> int:
     parser.add_argument("--fixture-doc-ids", type=Path, help="Optional JSON document ID fixture; no document bodies")
     parser.add_argument("--gate-manifest", type=Path, help="Optional reviewed external-input gate manifest")
     args = parser.parse_args()
-    metadata = json.loads(args.metadata.read_text(encoding="utf-8"))
-    cases = load_cases(args.cases, metadata.get("sha256"))
+    try:
+        metadata = json.loads(
+            args.metadata.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+        if not isinstance(metadata, dict):
+            raise TypeError("metadata must be a JSON object")
+        cases = load_cases(args.cases, metadata.get("sha256"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        print(f"FAIL input_integrity: {exc}")
+        return 1
     fixture_doc_ids = load_fixture_doc_ids(args.fixture_doc_ids)
     gate, gate_sha = m2_gate_status(args.gate_manifest)
     counts, coverage, issues = evaluate_cases(cases)

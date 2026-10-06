@@ -12,6 +12,19 @@ SPEC.loader.exec_module(MODULE)
 
 
 class MockRetrievalEvaluationTests(unittest.TestCase):
+    def test_case_loader_rejects_duplicate_keys_and_non_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            duplicate = root / "duplicate.jsonl"
+            duplicate.write_text('{"case_id":"a","case_id":"b"}\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                MODULE.load_cases(duplicate, None)
+
+            non_object = root / "non-object.jsonl"
+            non_object.write_text("[]\n", encoding="utf-8")
+            with self.assertRaisesRegex(TypeError, "must be a JSON object"):
+                MODULE.load_cases(non_object, None)
+
     def test_classifies_refusal_unauthorized_and_clarification(self):
         cases = [
             {"case_id": "r", "tags": ["unanswerable"]},
