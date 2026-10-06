@@ -115,6 +115,52 @@ def _check_image_assets(parsed_dir: Path, expected: Any) -> tuple[int, list[str]
     return count, errors
 
 
+def _check_element_metadata(meta: dict[str, Any], elements: Any) -> tuple[list[str], list[str]]:
+    """Cross-check summary counts against the normalized layout elements."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not isinstance(elements, list):
+        return errors, warnings
+
+    element_rows = [item for item in elements if isinstance(item, dict)]
+    if len(element_rows) != len(elements):
+        errors.append("layout_element_not_object")
+
+    actual_warning_count = sum(bool(item.get("warning")) for item in element_rows)
+    actual_table_count = sum(item.get("type") == "table" for item in element_rows)
+    actual_image_count = sum(item.get("type") == "image" for item in element_rows)
+    actual_page_numbers = sorted({
+        item["page_no"] for item in element_rows
+        if isinstance(item.get("page_no"), int) and not isinstance(item.get("page_no"), bool)
+    })
+
+    for field, actual in (
+        ("warning_count", actual_warning_count),
+        ("table_count", actual_table_count),
+        ("image_count", actual_image_count),
+    ):
+        declared = meta.get(field)
+        if declared is None:
+            warnings.append(f"{field}_missing")
+        elif isinstance(declared, bool) or not isinstance(declared, int) or declared < 0:
+            errors.append(f"{field}_invalid")
+        elif declared != actual:
+            errors.append(f"{field}_mismatch")
+
+    declared_pages = meta.get("page_numbers")
+    if declared_pages is None:
+        warnings.append("page_numbers_missing")
+    elif (
+        not isinstance(declared_pages, list)
+        or any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in declared_pages)
+        or declared_pages != sorted(set(declared_pages))
+    ):
+        errors.append("page_numbers_invalid")
+    elif declared_pages != actual_page_numbers:
+        errors.append("page_numbers_mismatch")
+    return errors, warnings
+
+
 def validate(root: Path) -> dict[str, Any]:
     """Return a metadata-only consistency report for one artifact root."""
     root = root.resolve()
@@ -201,6 +247,9 @@ def validate(root: Path) -> dict[str, Any]:
                 errors.append("layout_elements_missing")
             elif meta.get("element_count") != len(elements):
                 errors.append("element_count_mismatch")
+            element_errors, element_warnings = _check_element_metadata(meta, elements)
+            errors.extend(element_errors)
+            warnings.extend(element_warnings)
         if not full_md_path.is_file():
             errors.append("full_md_missing")
 

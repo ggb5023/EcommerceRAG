@@ -328,6 +328,41 @@ def test_mineru_integrity_validator_rejects_tampered_content_list(tmp_path: Path
     assert "input_content_list_sha256_mismatch" in row["errors"]
 
 
+def test_mineru_integrity_validator_rejects_tampered_element_summary_counts(tmp_path: Path):
+    root = _build_integrity_fixture(tmp_path)
+    parsed = next((root / "parsed").glob("*/*/meta.json"))
+    metadata = json.loads(parsed.read_text(encoding="utf-8"))
+    metadata.update({
+        "warning_count": 1,
+        "table_count": 0,
+        "image_count": 2,
+        "page_numbers": [2],
+    })
+    parsed.write_text(json.dumps(metadata), encoding="utf-8")
+
+    report = validate(root)
+    row = report["documents"][0]
+    assert row["status"] == "FAIL"
+    assert "warning_count_mismatch" in row["errors"]
+    assert "table_count_mismatch" in row["errors"]
+    assert "image_count_mismatch" in row["errors"]
+    assert "page_numbers_mismatch" in row["errors"]
+
+
+def test_mineru_integrity_validator_rejects_invalid_element_summary_types(tmp_path: Path):
+    root = _build_integrity_fixture(tmp_path)
+    parsed = next((root / "parsed").glob("*/*/meta.json"))
+    metadata = json.loads(parsed.read_text(encoding="utf-8"))
+    metadata.update({"warning_count": True, "page_numbers": [True]})
+    parsed.write_text(json.dumps(metadata), encoding="utf-8")
+
+    report = validate(root)
+    row = report["documents"][0]
+    assert row["status"] == "FAIL"
+    assert "warning_count_invalid" in row["errors"]
+    assert "page_numbers_invalid" in row["errors"]
+
+
 def test_legacy_mineru_metadata_is_not_reported_as_full_pass(tmp_path: Path):
     report = validate(_build_integrity_fixture(tmp_path, include_integrity=False))
     row = report["documents"][0]
