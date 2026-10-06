@@ -218,7 +218,7 @@ class RagService(rag_pb2_grpc.RagServiceServicer):
                         id=item["chunk_id"], content=item["content"], source_type="local_synthetic",
                         tenant_id=item["tenant_id"],
                         source_ref=item["source_ref"], document_id=item["document_id"],
-                        version_id=item["version_id"], rank=index, raw_score=item["score"],
+                        version_id=item["document_version_id"], rank=index, raw_score=item["score"],
                         shop_id=item["shop_id"], disclosure_class=item["disclosure_class"],
                         customer_eligible=item["disclosure_class"] == "external_allowed",
                     )], request_id=request.context.request_id, is_mock=True)

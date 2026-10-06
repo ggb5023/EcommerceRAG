@@ -120,7 +120,7 @@ class IngestValidationTests(unittest.TestCase):
 
     def test_selected_shop_must_also_be_in_authorized_shop_scope(self):
         source = load_manifest_index(self.manifest()).chunks[0]
-        west = replace(source, shop_id="demo-shop-west", chunk_id="west-only")
+        west = replace(source, document_id="west-doc", shop_id="demo-shop-west", chunk_id="west-only")
         index = LocalIndex([source, west])
         denied = index.search(source.content, tenant_id=source.tenant_id, shop_id="demo-shop-west",
                               allowed_shop_ids={"demo-shop-east"})

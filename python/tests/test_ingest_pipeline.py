@@ -11,6 +11,7 @@ from app.ingest.pipeline import (
     ParsedElement,
     chunk_elements,
     chunk_elements_v2,
+    validate_chunk_document_versions,
 )
 
 
@@ -136,7 +137,7 @@ def test_adjacent_expansion_reapplies_all_scope_filters(tmp_path: Path):
                                                    metadata=metadata()), max_chars=20)
     hit, neighbor = chunks[:2]
     forbidden = [replace(neighbor, chunk_id="other-tenant", tenant_id="tenant-b"),
-                 replace(neighbor, chunk_id="other-shop", shop_id="shop-b"),
+                 replace(neighbor, chunk_id="other-shop", document_id="other-shop-doc", shop_id="shop-b"),
                  replace(neighbor, chunk_id="other-document", document_id="restricted"),
                  replace(neighbor, chunk_id="old-version", version_id="v0"),
                  replace(neighbor, chunk_id="other-section", section_seq=2),
@@ -158,6 +159,51 @@ def test_adjacent_expansion_reapplies_all_scope_filters(tmp_path: Path):
     scope["allowed_document_ids"] = {"doc"}
     index.activate("tenant-a", "doc", "v0")
     assert not index.search("目标商品", adjacent_window=1, **scope)
+
+
+def test_document_version_binding_rejects_duplicate_chunk_ids(tmp_path: Path):
+    import pytest
+
+    path = tmp_path / "versioned.md"
+    path.write_text("商品规格说明", encoding="utf-8")
+    chunks = chunk_elements_v2(MarkdownParser().parse(
+        path, document_id="doc", version_id="v1", metadata=metadata()))
+    assert chunks
+    with pytest.raises(ValueError, match="duplicate chunk_id"):
+        validate_chunk_document_versions([chunks[0], replace(chunks[0], content="篡改后的正文")])
+    with pytest.raises(ValueError, match="duplicate chunk_id"):
+        LocalIndex(chunks).add([chunks[0]])
+
+
+def test_document_version_binding_rejects_shop_drift_within_version(tmp_path: Path):
+    import pytest
+
+    path = tmp_path / "scoped.md"
+    path.write_text("同一版本的范围", encoding="utf-8")
+    chunks = chunk_elements_v2(MarkdownParser().parse(
+        path, document_id="doc", version_id="v1", metadata=metadata()), max_chars=4)
+    assert chunks
+    drifted = replace(chunks[0], chunk_id="drifted", shop_id="shop-b")
+    with pytest.raises(ValueError, match="document_version_scope_mismatch"):
+        LocalIndex([chunks[0], drifted])
+
+
+def test_document_version_binding_allows_explicit_version_switch(tmp_path: Path):
+    path = tmp_path / "switch.md"
+    path.write_text("版本一商品", encoding="utf-8")
+    first = chunk_elements_v2(MarkdownParser().parse(
+        path, document_id="doc", version_id="v1", metadata=metadata()))[0]
+    second = replace(first, version_id="v2", chunk_id="chunk-v2", content="版本二商品")
+    index = LocalIndex([first, second])
+    scope = {"tenant_id": "tenant-a", "shop_id": "shop-a", "allowed_shop_ids": {"shop-a"},
+             "allowed_document_ids": {"doc"}, "role": "operator"}
+    result = index.search("版本二商品", **scope)
+    assert result and result[0]["document_version_id"] == "v1"
+    assert result[0]["version_id"] == result[0]["document_version_id"]
+    index.activate("tenant-a", "doc", "v2")
+    result = index.search("版本二商品", **scope)
+    assert result and result[0]["document_version_id"] == "v2"
+    assert result[0]["version_id"] == result[0]["document_version_id"]
 
 
 def test_structured_chunks_preserve_sentence_boundaries_and_rule_version(tmp_path: Path):

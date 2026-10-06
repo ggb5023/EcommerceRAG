@@ -789,16 +789,41 @@ def chunk_elements_v2(elements: Iterable[ParsedElement], *, max_chars: int = 700
     return chunks
 
 
+def validate_chunk_document_versions(chunks: Iterable[Chunk]) -> list[Chunk]:
+    """Validate immutable chunk identity before an index can expose evidence.
+
+    Multiple versions of one document may coexist for an explicit activation
+    switch, but every chunk in a given document version must keep one shop
+    binding and every chunk ID must be unique in the index.
+    """
+    materialized = list(chunks)
+    seen_chunk_ids: set[str] = set()
+    version_scopes: dict[tuple[str, str, str], str] = {}
+    for chunk in materialized:
+        if not chunk.document_id or not chunk.version_id or not chunk.tenant_id or not chunk.shop_id:
+            raise ValueError("document_version_binding_invalid")
+        if chunk.chunk_id in seen_chunk_ids:
+            raise ValueError(f"duplicate chunk_id:{chunk.chunk_id}")
+        seen_chunk_ids.add(chunk.chunk_id)
+        version_key = (chunk.tenant_id, chunk.document_id, chunk.version_id)
+        previous_shop = version_scopes.get(version_key)
+        if previous_shop is not None and previous_shop != chunk.shop_id:
+            raise ValueError(f"document_version_scope_mismatch:{chunk.document_id}:{chunk.version_id}")
+        version_scopes[version_key] = chunk.shop_id
+    return materialized
+
+
 class LocalIndex:
     """Keyword/deterministic-vector compatible local index; no external model."""
     def __init__(self, chunks: Iterable[Chunk] = ()) -> None:
-        self.chunks = list(chunks)
+        self.chunks = validate_chunk_document_versions(chunks)
         self._active_versions: dict[tuple[str, str], str] = {}
         for chunk in self.chunks:
             self._active_versions.setdefault((chunk.tenant_id, chunk.document_id), chunk.version_id)
 
     def add(self, chunks: Iterable[Chunk]) -> None:
-        additions = list(chunks)
+        additions = validate_chunk_document_versions(chunks)
+        validate_chunk_document_versions([*self.chunks, *additions])
         self.chunks.extend(additions)
         for chunk in additions:
             self._active_versions.setdefault((chunk.tenant_id, chunk.document_id), chunk.version_id)
@@ -877,7 +902,8 @@ class LocalIndex:
                 if chunk.chunk_id not in seen:
                     seen.add(chunk.chunk_id)
                     expanded.append((score, chunk))
-        return [{"document_id": chunk.document_id, "version_id": chunk.version_id, "chunk_id": chunk.chunk_id,
+        return [{"document_id": chunk.document_id, "document_version_id": chunk.version_id,
+                 "version_id": chunk.version_id, "chunk_id": chunk.chunk_id,
                  "source_ref": chunk.source_ref, "content": chunk.content, "score": score, "rank": rank,
                  "citation_index": rank, "disclosure_class": chunk.disclosure_class, "is_mock": True,
                  "tenant_id": chunk.tenant_id, "shop_id": chunk.shop_id, "metadata": chunk.metadata}

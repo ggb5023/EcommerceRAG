@@ -65,6 +65,7 @@ def main():
         ("synthetic_fact", "SKU-CUP-480 库存快照是多少？", "syn-public-facts-a", "非实时库存"),
         ("unanswerable", "月球玄武岩密度是多少？", None, "暂时没有"),
     ]
+    version_bound_evidence = 0
     for name, query, expected, point in scenarios:
         conversation, turn = start(query)
         result = wait(turn["request_id"])
@@ -73,6 +74,8 @@ def main():
         assert result["conversation_id"] == conversation and result["turn_id"] == turn["turn_id"]
         assert point in result["answer"], name + " answer point missing"
         docs = {e["documentId"] for e in result["evidence"]}
+        assert all(e.get("versionId") for e in result["evidence"]), name + " evidence version missing"
+        version_bound_evidence += sum(bool(e.get("versionId")) for e in result["evidence"])
         assert "syn-facts-a" not in docs and "syn-restricted-a" not in docs
         if expected:
             assert expected in docs, name + " expected document missing"
@@ -91,7 +94,14 @@ def main():
         status, replay = http("/v1/turns/" + turn["request_id"] + "/events", headers={"Last-Event-ID": "2"})
         assert status == 200 and all(int(line[4:]) > 2 for line in replay.splitlines() if line.startswith(b"id: "))
         answers.add(result["answer"])
-        report["checks"].append({"name": name, "status": "PASS", "evidence_count": len(result["evidence"]), "citation_count": len(result["citations"])})
+        report["checks"].append({"name": name, "status": "PASS", "evidence_count": len(result["evidence"]),
+                                  "version_bound_evidence_count": sum(bool(e.get("versionId")) for e in result["evidence"]),
+                                  "citation_count": len(result["citations"])})
+    report["checks"].append({
+        "name": "document_version_binding",
+        "status": "PASS",
+        "version_bound_evidence_count": version_bound_evidence,
+    })
     assert len(answers) == len(scenarios), "different queries returned identical answers"
     conversation, asking = start("那个怎么样？")
     result = wait(asking["request_id"])
