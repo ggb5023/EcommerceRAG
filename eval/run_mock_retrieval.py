@@ -23,6 +23,16 @@ GATE_FIELDS = {"gate_version", "status", "real_service_acceptance", "requirement
 GATE_REQUIREMENT_FIELDS = {"ready", "owner", "evidence"}
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate keys instead of silently accepting the last value."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"gate manifest contains duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def load_cases(path: Path, expected_sha: str | None) -> list[dict]:
     raw = path.read_bytes()
     actual = hashlib.sha256(raw).hexdigest()
@@ -102,7 +112,10 @@ def m2_gate_status(path: Path | None = None) -> tuple[dict[str, object], str | N
     }
     manifest_sha = None
     if path is not None:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
         if not isinstance(payload, dict) or not isinstance(payload.get("requirements"), dict):
             raise ValueError("gate manifest must contain a requirements object")
         unknown_fields = sorted(set(payload) - GATE_FIELDS)
@@ -132,7 +145,10 @@ def m2_gate_status(path: Path | None = None) -> tuple[dict[str, object], str | N
             requirements[key]["ready"] = row["ready"]
         manifest_sha = file_sha256(path)
     status = "READY" if all(row["ready"] for row in requirements.values()) else "BLOCKED"
-    if path is not None and payload.get("status") not in GATE_STATUSES:
+    if path is not None and (
+        not isinstance(payload.get("status"), str)
+        or payload["status"] not in GATE_STATUSES
+    ):
         raise ValueError("gate manifest status is unsupported")
     if path is not None and payload["status"] != status:
         raise ValueError("gate manifest status does not match requirements")

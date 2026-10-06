@@ -167,6 +167,20 @@ class MockRetrievalEvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "status"):
                 MODULE.m2_gate_status(invalid_status)
 
+            malformed_status = root / "malformed-status.json"
+            malformed_status.write_text(json.dumps({**base, "status": []}))
+            with self.assertRaisesRegex(ValueError, "status"):
+                MODULE.m2_gate_status(malformed_status)
+
+            duplicate_key = root / "duplicate-key.json"
+            duplicate_key.write_text(
+                '{"gate_version":"m2-external-input-gate-v1",'
+                '"status":"BLOCKED","status":"READY",'
+                '"real_service_acceptance":false,"requirements":{}}'
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                MODULE.m2_gate_status(duplicate_key)
+
             unknown_requirement = root / "unknown-requirement.json"
             unknown_requirement.write_text(json.dumps({
                 **base,
