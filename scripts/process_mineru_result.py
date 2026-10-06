@@ -19,6 +19,16 @@ from app.ingest.pipeline import ParsedElement, chunk_elements_v2
 from app.providers.mineru import normalize_content_list
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Fail closed instead of silently keeping the last duplicate key."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate_json_key:{key}")
+        result[key] = value
+    return result
+
+
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -39,7 +49,7 @@ def _load_content_list(root: Path) -> tuple[list[Any], str, bytes]:
         raise ValueError("content_list_ambiguous")
     raw_bytes = candidates[0].read_bytes()
     try:
-        content = json.loads(raw_bytes)
+        content = json.loads(raw_bytes, object_pairs_hook=_reject_duplicate_json_keys)
     except json.JSONDecodeError as error:
         raise ValueError("content_list_invalid_json") from error
     return content, _digest(raw_bytes), raw_bytes

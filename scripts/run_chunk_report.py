@@ -17,6 +17,16 @@ ROOT = Path("/var/lib/ecommerce-rag/real-docs/source-fixtures-v1")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Fail closed instead of silently keeping the last duplicate key."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate_json_key:{key}")
+        result[key] = value
+    return result
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -209,8 +219,11 @@ def _failure_report(root: Path, error: str, errors: list[str] | None = None) -> 
 def build_report(root: Path) -> dict[str, Any]:
     source = root / "reports" / "parse-report.json"
     try:
-        data = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        data = json.loads(
+            source.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"parse_report_invalid:{type(exc).__name__}") from exc
     errors = validate_source_traceability(data, root)
     if errors:
@@ -253,9 +266,12 @@ def main() -> int:
         error = str(exc)
         errors = [error]
         try:
-            data = json.loads((args.root / "reports" / "parse-report.json").read_text(encoding="utf-8"))
+            data = json.loads(
+                (args.root / "reports" / "parse-report.json").read_text(encoding="utf-8"),
+                object_pairs_hook=_reject_duplicate_json_keys,
+            )
             errors = validate_source_traceability(data, args.root) or errors
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             pass
         output = _failure_report(args.root, error, errors)
     path = args.root / "reports" / "chunk-report.json"

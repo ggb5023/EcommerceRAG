@@ -162,6 +162,23 @@ def test_source_parser_rejects_duplicate_manifest_keys(tmp_path: Path):
         run(root)
 
 
+def test_chunk_report_rejects_duplicate_parse_report_keys(tmp_path: Path, monkeypatch):
+    root = tmp_path / "source-fixtures"
+    build(root)
+    (root / "reports").mkdir(parents=True, exist_ok=True)
+    (root / "reports" / "parse-report.json").write_text(
+        '{"real_service_acceptance":false,"reports":[],"summary":{},"summary":{}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("sys.argv", ["run_chunk_report.py", "--root", str(root)])
+
+    assert run_chunk_report_main() == 1
+    report = json.loads((root / "reports" / "chunk-report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "FAIL"
+    assert report["errors"] == ["parse_report_invalid:ValueError"]
+    assert report["real_service_acceptance"] is False
+
+
 def test_source_parser_cli_writes_metadata_only_manifest_failure(tmp_path: Path, monkeypatch):
     root = tmp_path / "source-fixtures"
     root.mkdir()

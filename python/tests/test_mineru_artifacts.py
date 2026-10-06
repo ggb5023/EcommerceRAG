@@ -176,6 +176,16 @@ def test_process_rejects_missing_invalid_and_duplicate_content_lists(tmp_path: P
         process(duplicate, document_id="doc", version_id="v1",
                 output_root=tmp_path / "out", tenant_id="lab", shop_id="shop")
 
+    duplicate_key = tmp_path / "duplicate-key"
+    duplicate_key.mkdir()
+    (duplicate_key / "content_list.json").write_text(
+        '[{"type":"text","type":"heading","text":"duplicate"}]',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate_json_key:type"):
+        process(duplicate_key, document_id="doc", version_id="v1",
+                output_root=tmp_path / "out", tenant_id="lab", shop_id="shop")
+
 
 def test_process_rejects_empty_elements_without_writing_empty_artifacts(tmp_path: Path):
     import pytest
@@ -326,6 +336,47 @@ def test_mineru_integrity_validator_rejects_tampered_content_list(tmp_path: Path
     row = report["documents"][0]
     assert row["status"] == "FAIL"
     assert "input_content_list_sha256_mismatch" in row["errors"]
+
+
+def test_mineru_integrity_validator_rejects_duplicate_json_keys(tmp_path: Path):
+    root = _build_integrity_fixture(tmp_path)
+    content_list = next((root / "parsed").glob("*/*/content_list.json"))
+    content_list.write_text(
+        '[{"type":"text","type":"heading","text":"duplicate"}]',
+        encoding="utf-8",
+    )
+
+    report = validate(root)
+    row = report["documents"][0]
+    assert row["status"] == "FAIL"
+    assert "content_list_invalid:duplicate_json_key:type" in row["errors"]
+
+
+def test_mineru_integrity_validator_rejects_duplicate_chunk_keys(tmp_path: Path):
+    root = _build_integrity_fixture(tmp_path)
+    parsed = next((root / "parsed").glob("*/*/meta.json"))
+    metadata = json.loads(parsed.read_text(encoding="utf-8"))
+    chunk_path = root / metadata["chunk_path"]
+    chunk_path.write_text(
+        '{"document_id":"golden-doc","document_version_id":"v1",'
+        '"chunk_hash":"' + "a" * 64 + '","chunk_hash":"' + "b" * 64 + '"}\n',
+        encoding="utf-8",
+    )
+
+    report = validate(root)
+    row = report["documents"][0]
+    assert row["status"] == "FAIL"
+    assert "chunk_duplicate_json_key:1:duplicate_json_key:chunk_hash" in row["errors"]
+
+
+def test_mineru_integrity_validator_reports_duplicate_manifest_keys(tmp_path: Path):
+    root = _build_integrity_fixture(tmp_path)
+    (root / "manifest.json").write_text(
+        '{"sources":[],"sources":[]}', encoding="utf-8"
+    )
+
+    report = validate(root)
+    assert report["input_errors"] == ["manifest_invalid:duplicate_json_key:sources"]
 
 
 def test_mineru_integrity_validator_rejects_tampered_element_summary_counts(tmp_path: Path):

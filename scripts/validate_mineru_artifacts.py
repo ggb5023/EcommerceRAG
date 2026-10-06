@@ -17,6 +17,16 @@ from typing import Any
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Fail closed instead of silently keeping the last duplicate key."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate_json_key:{key}")
+        result[key] = value
+    return result
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -27,7 +37,14 @@ def _sha256(path: Path) -> str:
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except ValueError as exc:
+        if str(exc).startswith("duplicate_json_key:"):
+            raise
+        return {}
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
@@ -37,16 +54,19 @@ def _valid_hash(value: Any) -> bool:
     return isinstance(value, str) and bool(SHA256_RE.fullmatch(value))
 
 
-def _manifest_sources(root: Path) -> dict[str, dict[str, Any]]:
-    manifest = _read_json(root / "manifest.json")
+def _manifest_sources(root: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    try:
+        manifest = _read_json(root / "manifest.json")
+    except ValueError as exc:
+        return {}, [f"manifest_invalid:{exc}"]
     sources = manifest.get("sources", [])
     if not isinstance(sources, list):
-        return {}
+        return {}, []
     return {
         item["document_id"]: item
         for item in sources
         if isinstance(item, dict) and isinstance(item.get("document_id"), str)
-    }
+    }, []
 
 
 def _chunk_path(root: Path, parsed_dir: Path, meta: dict[str, Any], document_id: str,
@@ -71,7 +91,13 @@ def _check_chunks(path: Path, document_id: str, version_id: str) -> tuple[int, l
                 if not line.strip():
                     continue
                 try:
-                    item = json.loads(line)
+                    item = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys)
+                except ValueError as exc:
+                    if str(exc).startswith("duplicate_json_key:"):
+                        errors.append(f"chunk_duplicate_json_key:{line_number}:{exc}")
+                    else:
+                        errors.append(f"chunk_invalid_json:{line_number}")
+                    continue
                 except json.JSONDecodeError:
                     errors.append(f"chunk_invalid_json:{line_number}")
                     continue
@@ -164,11 +190,22 @@ def _check_element_metadata(meta: dict[str, Any], elements: Any) -> tuple[list[s
 def validate(root: Path) -> dict[str, Any]:
     """Return a metadata-only consistency report for one artifact root."""
     root = root.resolve()
-    sources = _manifest_sources(root)
+    sources, input_errors = _manifest_sources(root)
     rows: list[dict[str, Any]] = []
     for meta_path in sorted((root / "parsed").glob("*/*/meta.json")):
         parsed_dir = meta_path.parent
-        meta = _read_json(meta_path)
+        try:
+            meta = _read_json(meta_path)
+        except ValueError as exc:
+            rows.append({
+                "document_id": None,
+                "document_version_id": None,
+                "parsed_artifact_path": str(parsed_dir),
+                "status": "FAIL",
+                "errors": [f"meta_invalid:{exc}"],
+                "warnings": [],
+            })
+            continue
         document_id = meta.get("document_id")
         version_id = meta.get("document_version_id")
         row: dict[str, Any] = {
@@ -217,7 +254,11 @@ def validate(root: Path) -> dict[str, Any]:
             errors.append("task_id_missing")
             task = {}
         else:
-            task = _read_json(root / "task-artifacts" / task_id / "meta.json")
+            try:
+                task = _read_json(root / "task-artifacts" / task_id / "meta.json")
+            except ValueError as exc:
+                errors.append(f"task_meta_invalid:{exc}")
+                task = {}
             if not task:
                 errors.append("task_artifact_missing")
             elif task.get("status") != "PASS":
@@ -241,7 +282,11 @@ def validate(root: Path) -> dict[str, Any]:
         if not layout_path.is_file():
             errors.append("layout_missing")
         else:
-            layout = _read_json(layout_path)
+            try:
+                layout = _read_json(layout_path)
+            except ValueError as exc:
+                errors.append(f"layout_invalid:{exc}")
+                layout = {}
             elements = layout.get("elements")
             if not isinstance(elements, list):
                 errors.append("layout_elements_missing")
@@ -259,7 +304,15 @@ def validate(root: Path) -> dict[str, Any]:
         else:
             try:
                 content_list_bytes = content_list_path.read_bytes()
-                content_list = json.loads(content_list_bytes)
+                content_list = json.loads(
+                    content_list_bytes,
+                    object_pairs_hook=_reject_duplicate_json_keys,
+                )
+            except ValueError as exc:
+                if str(exc).startswith("duplicate_json_key:"):
+                    errors.append(f"content_list_invalid:{exc}")
+                else:
+                    errors.append("content_list_invalid")
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 errors.append("content_list_invalid")
             else:
@@ -306,6 +359,7 @@ def validate(root: Path) -> dict[str, Any]:
         "report_version": "mineru-artifact-consistency-v1",
         "root": str(root),
         "real_service_acceptance": False,
+        "input_errors": input_errors,
         "documents": rows,
         "summary": {"documents": len(rows), **counts},
     }
@@ -322,7 +376,7 @@ def main() -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(output) if output else None, **report["summary"]}, ensure_ascii=False))
-    return 1 if report["summary"]["FAIL"] else 0
+    return 1 if report["summary"]["FAIL"] or report.get("input_errors") else 0
 
 
 if __name__ == "__main__":
