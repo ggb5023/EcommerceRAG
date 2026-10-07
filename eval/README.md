@@ -237,6 +237,24 @@ It is `real_service_acceptance=false` and `model_quality_claim=false`. A
 successful transport and retrieval ranking run does not approve model quality,
 answer quality, real merchant data, identity, or online customer service.
 
+### Answer-point evidence sidecar
+
+`answer_point_evidence.py` validates a separate, metadata-only review sidecar
+that binds each expected answer point to chunks already present in the
+approved alignment. It verifies the immutable case, alignment, and corpus
+hashes, rejects duplicate keys and cross-alignment chunks, and never modifies
+`synthetic_cases.jsonl` or source artifacts. The current sidecar is outside
+the repository at
+`/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned-provisional/answer-point-evidence-review-v1.json`;
+59 of 60 points are approved and `syn-005` remains `needs_revision`, so the
+sidecar status is `PENDING_REVIEW`.
+
+When supplied with `--answer-evidence`, `run_bailian_retrieval.py` records the
+review status and counts, then separates `evidence_unsupported` from
+`generation_rewrite_mismatch`. This is an experiment diagnostic only. The
+latest report has approved evidence support for all three selected cases but
+does not claim answer quality or real-service acceptance.
+
 ## Isolated Bailian pgvector evaluation
 
 `run_bailian_pgvector.py` is an explicit embedding-to-database experiment.

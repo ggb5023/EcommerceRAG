@@ -27,6 +27,7 @@ PYTHON_ROOT = ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
+from answer_point_evidence import validate_review
 from app.providers import build_provider
 from app.providers.config import (
     ProviderConfigError,
@@ -40,6 +41,7 @@ DEFAULT_CORPUS = Path(
     "/var/lib/ecommerce-rag/eval/synthetic-m2-v1-aligned-provisional/documents.jsonl"
 )
 DEFAULT_ALIGNMENT = DEFAULT_CORPUS.with_name("alignment-revision-1.json")
+DEFAULT_ANSWER_EVIDENCE = DEFAULT_CORPUS.with_name("answer-point-evidence-review-v1.json")
 DEFAULT_METADATA = ROOT / "eval" / "synthetic_cases.metadata.json"
 DEFAULT_ENV = Path("/etc/ecommerce-rag/providers.env")
 GENERATION_INSTRUCTION = (
@@ -81,6 +83,7 @@ def _answer_point_diagnostics(
     expected_points: Sequence[str],
     generated_points: Sequence[str],
     evidence: str,
+    approved_evidence_supported: Sequence[bool] | None = None,
 ) -> dict[str, Any]:
     """Summarize answer-point support without retaining source or model text."""
     expected = [point for point in expected_points if isinstance(point, str) and point.strip()]
@@ -98,13 +101,23 @@ def _answer_point_diagnostics(
         any(_token_overlap_supported(point, candidate) for candidate in generated)
         for point in expected
     ]
+    if approved_evidence_supported is not None:
+        if len(approved_evidence_supported) != len(expected):
+            raise ValueError("approved evidence support count does not match expected points")
+        reviewed_support = [bool(value) for value in approved_evidence_supported]
+    else:
+        reviewed_support = [False] * len(expected)
+    evidence_supported = [
+        lexical or reviewed
+        for lexical, reviewed in zip(evidence_token, reviewed_support)
+    ]
     classifications: list[str] = []
-    for evidence_supported, exact, token_match in zip(
-        evidence_token,
+    for evidence_is_supported, exact, token_match in zip(
+        evidence_supported,
         generated_exact,
         generated_token,
     ):
-        if not evidence_supported:
+        if not evidence_is_supported:
             classification = "evidence_unsupported"
         elif not generated:
             classification = "generation_empty"
@@ -129,6 +142,8 @@ def _answer_point_diagnostics(
         "generated_answer_point_count": len(generated),
         "evidence_exact_answer_point_match_count": sum(evidence_exact),
         "evidence_token_overlap_answer_point_match_count": sum(evidence_token),
+        "approved_evidence_answer_point_match_count": sum(reviewed_support),
+        "evidence_supported_answer_point_count": sum(evidence_supported),
         "generated_exact_answer_point_match_count": sum(generated_exact),
         "generated_token_overlap_answer_point_match_count": sum(generated_token),
         "answer_point_diagnostic_counts": classification_counts,
@@ -137,6 +152,8 @@ def _answer_point_diagnostics(
                 "expected_fingerprint": fingerprint(point),
                 "evidence_exact_supported": exact,
                 "evidence_token_overlap_supported": token,
+                "approved_evidence_supported": reviewed_support[index],
+                "evidence_supported": evidence_supported[index],
                 "generated_exact_supported": generated_exact[index],
                 "generated_token_overlap_supported": generated_token[index],
                 "classification": classifications[index],
@@ -353,6 +370,7 @@ async def run_live(
     alignment: Mapping[str, Any],
     *,
     batch_size: int = 16,
+    answer_evidence: Mapping[str, Sequence[bool]] | None = None,
 ) -> dict[str, Any]:
     selected_chunks: list[dict[str, Any]] = []
     for case in cases:
@@ -445,7 +463,12 @@ async def run_live(
                 generated_points = []
             generated_points = [point for point in generated_points if isinstance(point, str)]
             expected_points = [str(point) for point in case.get("expected_answer_points", [])]
-            answer_diagnostics = _answer_point_diagnostics(expected_points, generated_points, evidence)
+            answer_diagnostics = _answer_point_diagnostics(
+                expected_points,
+                generated_points,
+                evidence,
+                (answer_evidence or {}).get(case_id),
+            )
             results.append({
                 "case_id": case_id,
                 "expected_document_ids": sorted(expected_ids),
@@ -474,6 +497,23 @@ async def run_live(
 
 async def main_async(args: argparse.Namespace) -> int:
     cases, corpus, alignment, issues = load_inputs(args.cases, args.corpus, args.alignment, args.metadata)
+    answer_evidence: dict[str, list[bool]] = {}
+    answer_review: dict[str, Any] = {
+        "status": "NOT_RUN",
+        "review_sha256": None,
+        "issues": [],
+    }
+    if args.answer_evidence and args.answer_evidence.is_file() and not issues:
+        answer_evidence, answer_review = validate_review(
+            args.answer_evidence,
+            args.cases,
+            args.corpus,
+            args.alignment,
+            cases,
+            corpus,
+            alignment,
+        )
+        issues.extend(f"answer_evidence:{issue}" for issue in answer_review.get("issues", []))
     if issues or not args.live:
         report = not_run_report(args.cases, args.corpus, args.alignment, issues + ([] if args.live else ["live_flag_required"]))
         print(json.dumps({"status": report["status"], "issues": report["issues"], "real_service_acceptance": False}, ensure_ascii=False))
@@ -485,7 +525,13 @@ async def main_async(args: argparse.Namespace) -> int:
         if config.profile != "aliyun-bailian":
             raise ProviderConfigError("provider profile is not aliyun-bailian")
         provider = build_provider(config)
-        run = await run_live(provider, selected, corpus, alignment)
+        run = await run_live(
+            provider,
+            selected,
+            corpus,
+            alignment,
+            answer_evidence=answer_evidence,
+        )
     except (ProviderConfigError, ValueError) as error:
         report = not_run_report(args.cases, args.corpus, args.alignment, [f"configuration:{type(error).__name__}"])
         print(json.dumps({"status": report["status"], "issues": report["issues"], "real_service_acceptance": False}, ensure_ascii=False))
@@ -501,6 +547,12 @@ async def main_async(args: argparse.Namespace) -> int:
         "real_service_acceptance": False,
         "m1_connected": False,
         "online_requests_made": True,
+        "answer_evidence_review_status": answer_review.get("status", "NOT_RUN"),
+        "answer_evidence_review_sha256": answer_review.get("review_sha256"),
+        "answer_evidence_review_counts": {
+            key: answer_review.get(key, 0)
+            for key in ("point_count", "approved_point_count", "unresolved_point_count")
+        },
         **run,
     }
     if args.output:
@@ -518,6 +570,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     parser.add_argument("--alignment", type=Path, default=DEFAULT_ALIGNMENT)
+    parser.add_argument("--answer-evidence", type=Path, default=DEFAULT_ANSWER_EVIDENCE)
     parser.add_argument("--metadata", type=Path, default=DEFAULT_METADATA)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()

@@ -44,6 +44,20 @@ def test_answer_point_diagnostics_distinguish_evidence_and_generation_gaps():
     assert all("配送" not in json.dumps(diagnostics, ensure_ascii=False) for _ in [0])
 
 
+def test_reviewed_evidence_separates_source_alignment_from_generation_rewrite():
+    diagnostics = MODULE._answer_point_diagnostics(
+        ["适合20至26摄氏度且应保持干燥"],
+        ["建议在室内约20至26摄氏度、干燥且通风正常"],
+        "商品资料建议在室内约 20 至 26 摄氏度、干燥且通风正常的环境中使用。",
+        [True],
+    )
+    assert diagnostics["evidence_exact_answer_point_match_count"] == 0
+    assert diagnostics["evidence_token_overlap_answer_point_match_count"] == 0
+    assert diagnostics["approved_evidence_answer_point_match_count"] == 1
+    assert diagnostics["evidence_supported_answer_point_count"] == 1
+    assert diagnostics["answer_point_diagnostic_counts"] == {"generation_rewrite_mismatch": 1}
+
+
 def test_no_live_flag_is_explicitly_not_run(tmp_path):
     cases = tmp_path / "cases.jsonl"
     corpus = tmp_path / "corpus.jsonl"
