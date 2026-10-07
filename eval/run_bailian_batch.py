@@ -72,18 +72,24 @@ class RequestBudget:
         max_requests: int,
         max_requests_per_minute: int,
         max_cost_units: int,
+        initial_requests: int = 0,
+        initial_cost_units: int = 0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
         if min(max_requests, max_requests_per_minute, max_cost_units) <= 0:
             raise BatchPlanError("request and cost limits must be positive")
+        if min(initial_requests, initial_cost_units) < 0:
+            raise BatchPlanError("initial request and cost counts must be non-negative")
+        if initial_requests > max_requests or initial_cost_units > max_cost_units:
+            raise BatchPlanError("checkpoint budget already exceeded")
         self.max_requests = max_requests
         self.max_requests_per_minute = max_requests_per_minute
         self.max_cost_units = max_cost_units
         self.clock = clock
         self.sleep = sleep
-        self.total_requests = 0
-        self.cost_units = 0
+        self.total_requests = initial_requests
+        self.cost_units = initial_cost_units
         self.timestamps: collections.deque[float] = collections.deque()
 
     async def acquire(self, operation: str) -> None:
@@ -240,6 +246,8 @@ def _checkpoint_payload(identity: Mapping[str, Any], plan: Mapping[str, Any]) ->
         "excluded_case_count": len(plan["excluded_cases"]),
         "completed_batches": [],
         "failed_batch": None,
+        "request_count": 0,
+        "cost_units": 0,
         "real_service_acceptance": False,
         "m1_connected": False,
     }
@@ -259,6 +267,10 @@ def _load_checkpoint(path: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
     completed = checkpoint.get("completed_batches", [])
     if not isinstance(completed, list) or any(not isinstance(row, Mapping) for row in completed):
         raise BatchPlanError("checkpoint_completed_batches_invalid")
+    for field in ("request_count", "cost_units"):
+        value = checkpoint.get(field, 0)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise BatchPlanError(f"checkpoint_{field}_invalid")
     return dict(checkpoint)
 
 
@@ -290,6 +302,8 @@ async def run_batches(
         max_requests=max_requests,
         max_requests_per_minute=max_requests_per_minute,
         max_cost_units=max_cost_units,
+        initial_requests=int(checkpoint.get("request_count", 0)),
+        initial_cost_units=int(checkpoint.get("cost_units", 0)),
         clock=clock,
         sleep=sleep,
     )

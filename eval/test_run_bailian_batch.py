@@ -178,6 +178,61 @@ def test_batch_failure_stops_and_records_failed_batch(tmp_path, monkeypatch):
     assert data["failed_batch"]["batch_id"] == "batch-001"
 
 
+def test_resume_restores_consumed_budget_before_new_provider_calls(tmp_path, monkeypatch):
+    calls = []
+
+    async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
+        await provider.embed(["fixture"])
+        calls.append([case["case_id"] for case in cases])
+        return {"status": "PASS", "case_results": []}
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", fake_run_live)
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "checkpoint_version": "bailian-batch-checkpoint-v1",
+                "identity": {"cases_sha256": "a", "batch_size": 1},
+                "status": "RUNNING",
+                "eligible_case_count": 2,
+                "excluded_case_count": 0,
+                "completed_batches": [
+                    {
+                        "batch_id": "batch-001",
+                        "case_ids": ["a"],
+                        "status": "PASS",
+                        "request_count": 2,
+                        "cost_units": 2,
+                        "slot_reports": [],
+                        "case_results": [],
+                    }
+                ],
+                "failed_batch": None,
+                "request_count": 2,
+                "cost_units": 2,
+                "real_service_acceptance": False,
+                "m1_connected": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(MODULE.RequestBudgetExceeded, match="request_budget_exceeded:embedding"):
+        asyncio.run(
+            MODULE.run_batches(
+                object(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=2,
+                max_requests_per_minute=4,
+                max_cost_units=2,
+                document_batch_size=16,
+                checkpoint_path=checkpoint,
+                resume=True,
+            )
+        )
+    assert calls == []
+
+
 def test_live_rejects_existing_report_before_provider_config_or_network(tmp_path):
     output = tmp_path / "existing-report.json"
     output.write_text("{}\n", encoding="utf-8")
