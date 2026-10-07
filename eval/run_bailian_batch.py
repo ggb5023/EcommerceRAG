@@ -15,6 +15,7 @@ import asyncio
 import collections
 import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -74,8 +75,10 @@ class RequestBudget:
         max_cost_units: int,
         initial_requests: int = 0,
         initial_cost_units: int = 0,
+        initial_recent_timestamps: Sequence[float] = (),
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Any] = asyncio.sleep,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         if min(max_requests, max_requests_per_minute, max_cost_units) <= 0:
             raise BatchPlanError("request and cost limits must be positive")
@@ -88,9 +91,24 @@ class RequestBudget:
         self.max_cost_units = max_cost_units
         self.clock = clock
         self.sleep = sleep
+        self.wall_clock = wall_clock
         self.total_requests = initial_requests
         self.cost_units = initial_cost_units
         self.timestamps: collections.deque[float] = collections.deque()
+        self.wall_timestamps: collections.deque[float] = collections.deque()
+        now = self.clock()
+        wall_now = self.wall_clock()
+        for timestamp in initial_recent_timestamps:
+            if not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool) or not math.isfinite(timestamp):
+                raise BatchPlanError("initial rate timestamps must be finite numbers")
+            age = max(0.0, wall_now - float(timestamp))
+            if age <= 60.0:
+                self.timestamps.append(now - age)
+                self.wall_timestamps.append(float(timestamp))
+
+    def recent_wall_timestamps(self) -> list[float]:
+        """Return the current rolling-window timestamps for checkpointing."""
+        return list(self.wall_timestamps)
 
     async def acquire(self, operation: str) -> None:
         """Wait for the rolling RPM gate, then reserve one request unit."""
@@ -105,12 +123,14 @@ class RequestBudget:
             now = self.clock()
             while self.timestamps and self.timestamps[0] <= now - 60.0:
                 self.timestamps.popleft()
+                self.wall_timestamps.popleft()
             if len(self.timestamps) < self.max_requests_per_minute:
                 break
             delay = max(0.0, self.timestamps[0] + 60.0 - now)
             await self.sleep(delay)
         now = self.clock()
         self.timestamps.append(now)
+        self.wall_timestamps.append(self.wall_clock())
         self.total_requests += 1
         self.cost_units += 1
 
@@ -248,6 +268,7 @@ def _checkpoint_payload(identity: Mapping[str, Any], plan: Mapping[str, Any]) ->
         "failed_batch": None,
         "request_count": 0,
         "cost_units": 0,
+        "recent_request_timestamps": [],
         "real_service_acceptance": False,
         "m1_connected": False,
     }
@@ -271,6 +292,17 @@ def _load_checkpoint(path: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
         value = checkpoint.get(field, 0)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise BatchPlanError(f"checkpoint_{field}_invalid")
+    timestamps = checkpoint.get("recent_request_timestamps", [])
+    if (
+        not isinstance(timestamps, list)
+        or any(
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            for value in timestamps
+        )
+    ):
+        raise BatchPlanError("checkpoint_recent_request_timestamps_invalid")
     return dict(checkpoint)
 
 
@@ -287,6 +319,7 @@ async def run_batches(
     resume: bool = False,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], Any] = asyncio.sleep,
+    wall_clock: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     estimated = int(plan["estimated_requests"])
     if estimated > max_requests or estimated > max_cost_units:
@@ -304,8 +337,10 @@ async def run_batches(
         max_cost_units=max_cost_units,
         initial_requests=int(checkpoint.get("request_count", 0)),
         initial_cost_units=int(checkpoint.get("cost_units", 0)),
+        initial_recent_timestamps=checkpoint.get("recent_request_timestamps", []),
         clock=clock,
         sleep=sleep,
+        wall_clock=wall_clock,
     )
     results: list[dict[str, Any]] = []
     slot_reports: list[dict[str, Any]] = []
@@ -360,6 +395,7 @@ async def run_batches(
         checkpoint["completed_batches"] = list(completed.values())
         checkpoint["request_count"] = budget.total_requests
         checkpoint["cost_units"] = budget.cost_units
+        checkpoint["recent_request_timestamps"] = budget.recent_wall_timestamps()
         if checkpoint_path:
             _atomic_json(checkpoint_path, checkpoint, replace=True)
         results.extend(batch_record["case_results"])

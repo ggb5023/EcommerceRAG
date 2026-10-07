@@ -233,6 +233,73 @@ def test_resume_restores_consumed_budget_before_new_provider_calls(tmp_path, mon
     assert calls == []
 
 
+def test_resume_restores_rolling_rate_window(tmp_path, monkeypatch):
+    class Clock:
+        now = 100.0
+
+        def __call__(self):
+            return self.now
+
+    clock = Clock()
+
+    async def sleep(delay):
+        clock.now += delay
+
+    calls = []
+
+    async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
+        await provider.embed(["fixture"])
+        calls.append([case["case_id"] for case in cases])
+        return {"status": "PASS", "case_results": []}
+
+    class Provider:
+        async def embed(self, texts):
+            return []
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", fake_run_live)
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "checkpoint_version": "bailian-batch-checkpoint-v1",
+                "identity": {"cases_sha256": "a", "batch_size": 1},
+                "status": "RUNNING",
+                "eligible_case_count": 2,
+                "excluded_case_count": 0,
+                "completed_batches": [
+                    {"batch_id": "batch-001", "case_ids": ["a"], "status": "PASS", "slot_reports": [], "case_results": []}
+                ],
+                "failed_batch": None,
+                "request_count": 1,
+                "cost_units": 1,
+                "recent_request_timestamps": [50.0],
+                "real_service_acceptance": False,
+                "m1_connected": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = asyncio.run(
+        MODULE.run_batches(
+            Provider(),
+            _small_plan(),
+            identity={"cases_sha256": "a", "batch_size": 1},
+            max_requests=3,
+            max_requests_per_minute=1,
+            max_cost_units=3,
+            document_batch_size=16,
+            checkpoint_path=checkpoint,
+            resume=True,
+            clock=clock,
+            sleep=sleep,
+            wall_clock=clock,
+        )
+    )
+    assert result["request_count"] == 2
+    assert calls == [["b"]]
+    assert clock.now == 110.0
+
+
 def test_live_rejects_existing_report_before_provider_config_or_network(tmp_path):
     output = tmp_path / "existing-report.json"
     output.write_text("{}\n", encoding="utf-8")
