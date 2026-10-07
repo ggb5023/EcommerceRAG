@@ -233,8 +233,10 @@ default limit is three cases to keep the experiment within the reviewed quota.
 
 The prior revision-1 v2 report is outside the repository at
 `/var/lib/ecommerce-rag/real-docs/reports/bailian-retrieval-revision-1-current.json`.
-The v3 evaluator has offline regression coverage; a new v3 online run is
-`NOT_RUN`. Reports retain `real_service_acceptance=false`,
+The new five-case v3 report is
+`/var/lib/ecommerce-rag/real-docs/reports/bailian-retrieval-revision-1-context-v3.json`.
+It verifies actual delivery of the reviewed source bodies for all five cases.
+Reports retain `real_service_acceptance=false`,
 `model_quality_claim=false`, and `answer_quality_status=NOT_RUN`. A
 successful transport and retrieval ranking run does not approve model quality,
 answer quality, real merchant data, identity, or online customer service.
@@ -271,10 +273,37 @@ Lexical exact/token matches do not assess semantic answer quality.
 
 The prior revision-1 v2 report recorded source approval for all five selected
 cases and `generation_rewrite_mismatch` with exact/token match 0/5. It did not
-prove that all approved support reached the generation context. Some sidecar
-points bind more chunks than the top-five context can hold. Resolve evidence
-bindings and context composition before treating lexical mismatch as a
-generation defect; retain prior reports and immutable inputs unchanged.
+prove that all approved support reached the generation context. The original
+sidecar includes frontmatter/headings, and four points bind six chunks each.
+Separate `answer-point-evidence-review-revision-1-context-v1.json` and
+`answer-point-evidence-review-revision-1-context-v2.json` artifacts retain
+lineage to that review. Eight points were re-reviewed against source bodies;
+the other 52 bindings remain unchanged. The first five cases have the same
+body bindings in both new artifacts. Their v3 live report uses context-v1 and
+verifies actual support delivery for 5/5; exact/token matching remains 0/5.
+Neither lexical mismatch nor delivered evidence establishes semantic answer
+quality. Retain prior reports and immutable inputs unchanged.
+
+### Offline Context Audit
+
+`--audit-context` is mutually exclusive with `--live`. It checks approved
+bindings against tenant/shop, disclosure, business dates, and the union of
+required chunks across answer points. It never loads Provider configuration,
+selects ranking evidence, approves a review, or calls a model. Use `--limit 60`
+for the complete input; results distinguish `WITHIN_BUDGET`, `BUDGET_EXCEEDED`,
+`INELIGIBLE_REQUIRED_CHUNKS`, and `UNREVIEWED`. A feasible binding does not
+prove that retrieval will deliver it.
+
+The context-v2 audit has 53 `WITHIN_BUDGET`, zero `BUDGET_EXCEEDED`, and seven
+`INELIGIBLE_REQUIRED_CHUNKS`. Those seven are the five scoped denials and two
+revoked/expired cases; their evidence must not enter generation. The audit
+retains `generation_context_selection=NOT_RUN` and
+`answer_quality_status=NOT_RUN`.
+
+Without `--output` the audit only prints metadata. Explicit output creates a
+new report atomically with mode `0600`; both audit and live mode refuse an
+existing output path before making Provider calls, preserving historical
+evidence. Choose a new report filename for every controlled rerun.
 
 ## Isolated Bailian pgvector evaluation
 

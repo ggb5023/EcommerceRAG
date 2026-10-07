@@ -15,8 +15,10 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import re
 import sys
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from datetime import date
@@ -51,6 +53,7 @@ GENERATION_INSTRUCTION = (
     "they appear in the evidence. Do not invent facts or weaken a restriction; "
     "omit a point when the evidence does not support it."
 )
+GENERATION_CONTEXT_CHUNK_LIMIT = 5
 
 
 def sha256(path: Path) -> str:
@@ -358,6 +361,69 @@ def _in_business_date(row: Mapping[str, Any], current: date) -> bool:
     return not ((start and current < start) or (end and current >= end))
 
 
+def audit_generation_context(
+    cases: Sequence[dict[str, Any]],
+    corpus: list[dict[str, Any]],
+    approved_bindings: Mapping[str, Sequence[Sequence[str]]],
+) -> dict[str, Any]:
+    """Check support feasibility without selecting evidence or contacting a model."""
+    rows: list[dict[str, Any]] = []
+    for case in cases:
+        case_id = str(case["case_id"])
+        eligible_ids = {chunk["chunk_id"] for chunk in _eligible_chunks(case, corpus)}
+        points = case.get("expected_answer_points", [])
+        bindings = approved_bindings.get(case_id, [])
+        required_by_point = [set(bindings[index]) if index < len(bindings) else set() for index in range(len(points))]
+        required = set().union(*required_by_point) if required_by_point else set()
+        missing = required - eligible_ids
+        if not required_by_point or any(not chunk_ids for chunk_ids in required_by_point):
+            status = "UNREVIEWED"
+        elif missing:
+            status = "INELIGIBLE_REQUIRED_CHUNKS"
+        elif len(required) > GENERATION_CONTEXT_CHUNK_LIMIT:
+            status = "BUDGET_EXCEEDED"
+        else:
+            status = "WITHIN_BUDGET"
+        rows.append({
+            "case_id": case_id,
+            "status": status,
+            "required_chunk_count": len(required),
+            "eligible_required_chunk_count": len(required & eligible_ids),
+            "ineligible_required_chunk_ids": sorted(missing),
+            "point_required_chunk_counts": [len(chunk_ids) for chunk_ids in required_by_point],
+        })
+    return {
+        "report_version": "generation-context-audit-v1",
+        "case_count": len(rows),
+        "context_chunk_limit": GENERATION_CONTEXT_CHUNK_LIMIT,
+        "status_counts": {
+            status: sum(row["status"] == status for row in rows)
+            for status in ("WITHIN_BUDGET", "BUDGET_EXCEEDED", "INELIGIBLE_REQUIRED_CHUNKS", "UNREVIEWED")
+        },
+        "generation_context_selection": "NOT_RUN",
+        "online_requests_made": False,
+        "answer_quality_status": "NOT_RUN",
+        "model_quality_claim": False,
+        "real_service_acceptance": False,
+        "case_results": rows,
+    }
+
+
+def write_report(path: Path, report: Mapping[str, Any]) -> None:
+    """Publish a restricted report atomically, preserving any existing evidence."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(report, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def _rank_by_embedding(
     query_embedding: Sequence[float],
     chunk_embeddings: Sequence[Sequence[float]],
@@ -490,7 +556,7 @@ async def run_live(
             if not rerank_candidates:
                 results.append({"case_id": case_id, "status": "FAIL", "error_code": "no_candidates"})
                 continue
-            rerank_result = await provider.rerank(query, [str(chunk.get("content", "")) for chunk in rerank_candidates], top_n=min(5, len(rerank_candidates)))
+            rerank_result = await provider.rerank(query, [str(chunk.get("content", "")) for chunk in rerank_candidates], top_n=min(GENERATION_CONTEXT_CHUNK_LIMIT, len(rerank_candidates)))
             slot_reports.append({
                 **_meta("rerank", rerank_result),
                 "operation": "rerank",
@@ -498,7 +564,7 @@ async def run_live(
             })
             rerank_rows = _rank_by_rerank(rerank_result, rerank_candidates)
             candidate_by_id = {chunk["chunk_id"]: chunk for chunk in rerank_candidates}
-            evidence_chunks = [candidate_by_id[row["chunk_id"]] for row in rerank_rows[:5]]
+            evidence_chunks = [candidate_by_id[row["chunk_id"]] for row in rerank_rows[:GENERATION_CONTEXT_CHUNK_LIMIT]]
             if not evidence_chunks:
                 results.append({"case_id": case_id, "status": "FAIL", "error_code": "no_rerank_evidence"})
                 continue
@@ -605,6 +671,31 @@ async def main_async(args: argparse.Namespace) -> int:
             alignment,
         )
         issues.extend(f"answer_evidence:{issue}" for issue in answer_review.get("issues", []))
+    if args.output and os.path.lexists(args.output):
+        print(json.dumps({"status": "FAIL", "issues": ["output_exists"], "online_requests_made": False}))
+        return 2
+    if getattr(args, "audit_context", False):
+        if issues:
+            print(json.dumps({"status": "FAIL", "issues": issues, "online_requests_made": False}))
+            return 2
+        try:
+            report = audit_generation_context(
+                select_cases(cases, args.limit), corpus,
+                answer_review.get("approved_support_chunk_ids", {}),
+            )
+        except ValueError:
+            print(json.dumps({"status": "FAIL", "issues": ["context_audit_input_invalid"]}))
+            return 2
+        report.update({
+            "input_sha256": sha256(args.cases),
+            "corpus_sha256": sha256(args.corpus),
+            "alignment_sha256": sha256(args.alignment),
+            "answer_evidence_review_sha256": answer_review.get("review_sha256"),
+        })
+        if args.output:
+            write_report(args.output, report)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
     if issues or not args.live:
         report = not_run_report(args.cases, args.corpus, args.alignment, issues + ([] if args.live else ["live_flag_required"]))
         print(json.dumps({"status": report["status"], "issues": report["issues"], "real_service_acceptance": False}, ensure_ascii=False))
@@ -649,15 +740,16 @@ async def main_async(args: argparse.Namespace) -> int:
         **run,
     }
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_report(args.output, report)
     print(json.dumps({key: report[key] for key in ("status", "case_count", "real_service_acceptance", "m1_connected")}, ensure_ascii=False))
     return 0 if report["status"] == "PASS" else 4
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--live", action="store_true", help="make isolated Bailian requests")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--live", action="store_true", help="make isolated Bailian requests")
+    mode.add_argument("--audit-context", action="store_true", help="audit approved evidence against scope/date and context size without a Provider call")
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--env", type=Path, default=DEFAULT_ENV)
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)

@@ -423,3 +423,83 @@ def test_invalid_business_date_fails_before_provider_calls(invalid_date):
 def test_invalid_effective_date_is_reported_as_input_integrity_issue():
     document = _document("a", effective_from="2026-10-02", effective_to="2026-10-01")
     assert MODULE.validate_corpus_versions([document]) == ["corpus_chunk_dates_invalid:chunk-a"]
+
+
+def test_context_audit_reports_budget_without_selecting_evidence_or_leaking_text():
+    corpus = [_document(str(index)) for index in range(6)]
+    bindings = {"case-1": [[f"chunk-{index}" for index in range(6)]]}
+    report = MODULE.audit_generation_context([_case()], corpus, bindings)
+    assert report["status_counts"]["BUDGET_EXCEEDED"] == 1
+    assert report["case_results"][0]["required_chunk_count"] == 6
+    assert report["online_requests_made"] is False
+    assert report["generation_context_selection"] == "NOT_RUN"
+    assert report["answer_quality_status"] == "NOT_RUN"
+    assert "source evidence" not in json.dumps(report)
+
+
+def test_context_audit_uses_union_of_point_bindings_and_checks_eligibility():
+    case = {**_case(), "expected_answer_points": ["point-a", "point-b"]}
+    corpus = [_document("a"), _document("b", effective_to="2026-10-01")]
+    report = MODULE.audit_generation_context([case], corpus, {"case-1": [["chunk-a"], ["chunk-a", "chunk-b"]]})
+    row = report["case_results"][0]
+    assert row["status"] == "INELIGIBLE_REQUIRED_CHUNKS"
+    assert row["required_chunk_count"] == 2
+    assert row["ineligible_required_chunk_ids"] == ["chunk-b"]
+    assert row["point_required_chunk_counts"] == [1, 2]
+    report = MODULE.audit_generation_context([case], corpus, {"case-1": [["chunk-a"], ["chunk-a"]]})
+    assert report["case_results"][0]["status"] == "WITHIN_BUDGET"
+    assert report["case_results"][0]["required_chunk_count"] == 1
+
+
+def test_context_audit_does_not_infer_approval_for_missing_point_bindings():
+    case = {**_case(), "expected_answer_points": ["point-a", "point-b"]}
+    report = MODULE.audit_generation_context([case], [_document("a")], {"case-1": [["chunk-a"]]})
+    assert report["case_results"][0]["status"] == "UNREVIEWED"
+
+
+def test_report_is_restricted_atomic_and_preserves_existing_evidence(tmp_path):
+    output = tmp_path / "reports" / "report.json"
+    MODULE.write_report(output, {"status": "NOT_RUN"})
+    assert output.stat().st_mode & 0o777 == 0o600
+    original = output.read_bytes()
+    with pytest.raises(FileExistsError):
+        MODULE.write_report(output, {"status": "PASS"})
+    assert output.read_bytes() == original
+    assert list(output.parent.iterdir()) == [output]
+
+
+def test_report_encoding_failure_leaves_no_partial_file(tmp_path):
+    output = tmp_path / "report.json"
+    with pytest.raises(TypeError):
+        MODULE.write_report(output, {"not_json": object()})
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_context_audit_does_not_load_provider_configuration(tmp_path, monkeypatch, capsys):
+    paths = {name: tmp_path / name for name in ("cases", "corpus", "alignment", "metadata", "answer_evidence")}
+    for path in paths.values():
+        path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(MODULE, "load_inputs", lambda *args: ([_case()], [_document("a")], {}, []))
+    monkeypatch.setattr(MODULE, "validate_review", lambda *args: ({"case-1": [True]}, {"approved_support_chunk_ids": {"case-1": [["chunk-a"]]}}))
+    def forbidden(*args):
+        raise AssertionError("offline audit must not read configuration or build Provider")
+    monkeypatch.setattr(MODULE, "load_provider_config", forbidden)
+    monkeypatch.setattr(MODULE, "build_provider", forbidden)
+    args = SimpleNamespace(**paths, output=None, env=tmp_path / "missing.env", live=False, audit_context=True, limit=1)
+    assert asyncio.run(MODULE.main_async(args)) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["status_counts"]["WITHIN_BUDGET"] == 1
+    assert report["online_requests_made"] is False
+
+
+def test_cli_rejects_existing_output_before_provider_calls(tmp_path, monkeypatch, capsys):
+    output = tmp_path / "prior-report.json"
+    output.write_text("historical evidence", encoding="utf-8")
+    monkeypatch.setattr(MODULE, "load_inputs", lambda *args: ([_case()], [_document("a")], {}, []))
+    def forbidden(*args):
+        raise AssertionError("output conflict must not call Provider")
+    monkeypatch.setattr(MODULE, "load_provider_config", forbidden)
+    args = SimpleNamespace(cases=output, corpus=output, alignment=output, metadata=output, answer_evidence=None, output=output, live=True)
+    assert asyncio.run(MODULE.main_async(args)) == 2
+    assert json.loads(capsys.readouterr().out)["issues"] == ["output_exists"]
+    assert output.read_text(encoding="utf-8") == "historical evidence"
