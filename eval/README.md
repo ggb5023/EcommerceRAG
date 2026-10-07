@@ -300,6 +300,25 @@ revoked/expired cases; their evidence must not enter generation. The audit
 retains `generation_context_selection=NOT_RUN` and
 `answer_quality_status=NOT_RUN`.
 
+### Answer Composition Diagnostics
+
+Each case also reports `answer-point-composition-v1`, a metadata-only heuristic
+that checks whether expected-point token overlap appears only after combining
+multiple generated entries, whether a generated entry overlaps multiple
+expected points, script relation (`same_script`, `opposite_script`, `mixed`,
+or `unclassified`), and counts for qualifier markers, numeric literals, and
+unit categories. Reports retain short fingerprints and counts, never generated
+or expected text. Fake-provider tests exercise split, combined, Chinese/English,
+and qualifier cases, including an existing immutable synthetic answer point.
+
+These signals do not establish entailment, contradiction, correct negation, or
+semantic answer quality. A unit-category match does not prove that the unit is
+attached to the right value. They do not change the existing exact/token
+diagnostics or `answer_quality_status=NOT_RUN`. The isolated v4 diagnostic run
+used five approved synthetic cases and context-v2 evidence review; its
+metadata-only report is outside the repository at
+`/var/lib/ecommerce-rag/real-docs/reports/bailian-retrieval-revision-1-context-diagnostic-v4.json`.
+
 Without `--output` the audit only prints metadata. Explicit output creates a
 new report atomically with mode `0600`; both audit and live mode refuse an
 existing output path before making Provider calls, preserving historical

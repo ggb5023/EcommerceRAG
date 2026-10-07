@@ -62,6 +62,72 @@ def test_reviewed_evidence_separates_source_alignment_from_generation_rewrite():
     assert diagnostics["answer_point_diagnostic_counts"] == {"generation_rewrite_mismatch": 1}
 
 
+def test_composition_diagnostics_detect_split_points_without_claiming_quality():
+    diagnostics = MODULE._answer_point_diagnostics(
+        ["The compact kettle weighs only 300 grams, measures 20 centimeters high, holds 500 milliliters, and uses a 220 volt supply."],
+        ["weighs only 300 grams", "measures 20 centimeters high", "holds 500 milliliters", "uses a 220 volt supply"],
+        "",
+    )
+    row = diagnostics["answer_point_composition_diagnostics"][0]
+    assert diagnostics["answer_point_composition_diagnostic_version"] == "answer-point-composition-v1"
+    assert diagnostics["answer_point_composition_is_heuristic"] is True
+    assert row["split_across_generated_points_candidate"] is True
+    assert diagnostics["expected_points_with_split_overlap_candidate_count"] == 1
+    assert row["language_relation"] == "same_script"
+    assert row["expected_numeric_literal_count"] == row["matched_numeric_literal_count"] == 4
+    assert row["expected_unit_category_count"] == row["matched_unit_category_count"] == 3
+    assert diagnostics["answer_point_composition_is_heuristic"] is True
+    assert "travel kettle" not in json.dumps(diagnostics)
+
+
+def test_composition_diagnostics_detect_one_point_combining_multiple_expected_points():
+    diagnostics = MODULE._answer_point_diagnostics(
+        ["Standard delivery takes 2-5 business days", "Returns are allowed within 7 calendar days"],
+        ["Standard delivery takes 2-5 business days and returns are allowed within 7 calendar days"],
+        "",
+    )
+    assert diagnostics["generated_points_with_multi_expected_overlap_candidate_count"] == 1
+    assert diagnostics["aggregate_generated_token_overlap_answer_point_count"] == 2
+    assert all(row["language_relation"] == "same_script" for row in diagnostics["answer_point_composition_diagnostics"])
+
+
+def test_composition_diagnostics_flags_language_and_qualifier_differences_as_counts():
+    diagnostics = MODULE._answer_point_diagnostics(
+        ["仅未拆封商品可以退货，签收后7天内申请"],
+        ["Unopened products can be returned within 7 days after delivery."],
+        "",
+    )
+    row = diagnostics["answer_point_composition_diagnostics"][0]
+    assert row["language_relation"] == "opposite_script"
+    assert row["expected_qualifier_marker_count"] > 0
+    assert row["missing_qualifier_marker_count"] > 0
+    assert row["expected_numeric_literal_count"] == row["matched_numeric_literal_count"] == 1
+    assert diagnostics["answer_point_composition_is_heuristic"] is True
+    assert diagnostics["language_relation_counts"]["opposite_script"] == 1
+
+
+def test_existing_synthetic_case_can_be_diagnosed_when_fake_output_splits_a_point():
+    cases = MODULE.load_jsonl(MODULE.DEFAULT_CASES)
+    candidates = [
+        point
+        for case in cases
+        for point in case.get("expected_answer_points", [])
+        if isinstance(point, str) and len(point) >= 15
+    ]
+    split_diagnostics = None
+    for point in candidates:
+        first = len(point) // 3
+        second = 2 * len(point) // 3
+        fragments = [point[:first], point[first:second], point[second:]]
+        row = MODULE._answer_point_composition_diagnostics([point], fragments)["answer_point_composition_diagnostics"][0]
+        if row["split_across_generated_points_candidate"]:
+            split_diagnostics = row
+            break
+    assert split_diagnostics is not None
+    assert split_diagnostics["individual_generated_point_overlap_count"] == 0
+    assert split_diagnostics["aggregate_generated_point_overlap"] is True
+
+
 def test_no_live_flag_is_explicitly_not_run(tmp_path):
     cases = tmp_path / "cases.jsonl"
     corpus = tmp_path / "corpus.jsonl"
@@ -272,8 +338,9 @@ def _document(document_id, *, tenant="tenant-a", shop="shop-a", **policy):
 
 
 class _RecordingProvider:
-    def __init__(self, rerank_indices=None):
+    def __init__(self, rerank_indices=None, generated_points=None):
         self.rerank_indices = rerank_indices
+        self.generated_points = generated_points or ["source evidence"]
         self.calls = []
         self.prompts = []
         self.candidates = []
@@ -295,9 +362,32 @@ class _RecordingProvider:
         self.calls.append("generation")
         self.prompts.append(messages[0]["content"])
         return SimpleNamespace(
-            structured={"answer_points": ["source evidence"]},
+            structured={"answer_points": self.generated_points},
             model="model", request_id="request", usage={},
         )
+
+
+def test_fake_provider_reports_composition_diagnostics_without_answer_text():
+    case = {
+        **_case(),
+        "expected_answer_points": [
+            "The compact kettle weighs only 300 grams, measures 20 centimeters high, holds 500 milliliters, and uses a 220 volt supply."
+        ],
+    }
+    provider = _RecordingProvider(generated_points=[
+        "weighs only 300 grams",
+        "measures 20 centimeters high",
+        "holds 500 milliliters",
+        "uses a 220 volt supply",
+    ])
+    report = asyncio.run(MODULE.run_live(provider, [case], [_document("a")], {}))
+    row = report["case_results"][0]
+    assert row["answer_point_composition_diagnostics"][0]["split_across_generated_points_candidate"] is True
+    assert row["answer_quality_status"] == "NOT_RUN"
+    encoded = json.dumps(report)
+    assert "compact kettle" not in encoded
+    assert "300 grams" not in encoded
+    assert "centimeters high" not in encoded
 
 
 def test_batch_cases_keep_each_tenant_and_shop_candidates_separate():

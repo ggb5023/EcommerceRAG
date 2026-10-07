@@ -83,6 +83,143 @@ def _token_overlap_supported(expected: str, generated: str, *, threshold: float 
     return len(expected_tokens & generated_tokens) / len(expected_tokens) >= threshold
 
 
+QUALIFIER_MARKERS = {
+    "polarity": ("不得", "不应", "不能", "不可", "禁止", "不允许", "未", "没有", "不是", "no", "not", "never", "cannot", "must not", "without"),
+    "scope": ("仅限", "仅", "只能", "至少", "最多", "不超过", "以内", "除外", "除非", "only", "at least", "at most", "no more than", "up to", "within", "except", "unless", "maximum", "minimum"),
+    "modality": ("必须", "应当", "需要", "建议", "可以", "must", "should", "required", "recommended", "may", "can"),
+    "uncertainty": ("可能", "通常", "一般", "不一定", "不保证", "无法保证", "possibly", "usually", "generally", "not guaranteed", "cannot guarantee"),
+}
+UNIT_MARKERS = {
+    "temperature": ("℃", "°c", "摄氏度"),
+    "length": ("centimeters", "centimeter", "millimeters", "millimeter", "inches", "inch", "厘米", "毫米", "英寸", "cm", "mm"),
+    "mass": ("kilograms", "kilogram", "grams", "gram", "公斤", "千克", "克", "kg", "g"),
+    "volume": ("milliliters", "milliliter", "liters", "liter", "毫升", "升", "ml", "l"),
+    "time": ("business days", "calendar days", "minutes", "minute", "hours", "hour", "weeks", "week", "months", "month", "years", "year", "days", "day", "工作日", "天", "小时", "分钟", "周", "个月", "年"),
+}
+
+
+def _contains_marker(text: str, marker: str) -> bool:
+    if marker.isascii() and marker.replace(" ", "").isalpha():
+        return re.search(rf"\b{re.escape(marker)}\b", text, re.IGNORECASE) is not None
+    return marker in text
+
+
+def _script_profile(text: str) -> str:
+    han_count = len(re.findall(r"[\u4e00-\u9fff]", text))
+    latin_count = len(re.findall(r"[A-Za-z]", text))
+    if han_count and latin_count:
+        return "mixed"
+    if han_count:
+        return "zh"
+    if latin_count:
+        return "en"
+    return "other"
+
+
+def _answer_point_composition_diagnostics(
+    expected_points: Sequence[str], generated_points: Sequence[str]
+) -> dict[str, Any]:
+    """Emit heuristic composition signals without retaining answer text."""
+    generated = [point for point in generated_points if isinstance(point, str) and point.strip()]
+    generated_text = "\n".join(generated)
+    generated_token_set = set().union(*(tokens(point) for point in generated)) if generated else set()
+    split_candidates = 0
+    aggregate_matches = 0
+    multi_expected_generated_points = 0
+    language_counts = {
+        relation: 0 for relation in ("same_script", "opposite_script", "mixed", "unclassified", "generated_missing")
+    }
+    details: list[dict[str, Any]] = []
+    for point in expected_points:
+        expected = point if isinstance(point, str) else ""
+        expected_tokens = tokens(expected)
+        individual_matches = sum(_token_overlap_supported(expected, item) for item in generated)
+        aggregate_match = bool(expected_tokens) and (
+            len(expected_tokens & generated_token_set) / len(expected_tokens) >= 0.5
+        )
+        split_candidate = aggregate_match and individual_matches == 0 and len(generated) > 1
+        aggregate_matches += aggregate_match
+        split_candidates += split_candidate
+
+        expected_profile = _script_profile(expected)
+        generated_profile = _script_profile(generated_text)
+        if not generated:
+            language_relation = "generated_missing"
+        elif expected_profile in {"zh", "en"} and generated_profile in {"zh", "en"}:
+            language_relation = "same_script" if expected_profile == generated_profile else "opposite_script"
+        elif expected_profile == generated_profile == "mixed":
+            language_relation = "mixed"
+        else:
+            language_relation = "unclassified"
+        language_counts[language_relation] += 1
+
+        expected_qualifiers = {
+            marker
+            for markers in QUALIFIER_MARKERS.values()
+            for marker in markers
+            if _contains_marker(expected, marker)
+        }
+        generated_qualifiers = {
+            marker
+            for markers in QUALIFIER_MARKERS.values()
+            for marker in markers
+            if _contains_marker(generated_text, marker)
+        }
+        expected_categories = {
+            category
+            for category, markers in QUALIFIER_MARKERS.items()
+            if any(_contains_marker(expected, marker) for marker in markers)
+        }
+        generated_categories = {
+            category
+            for category, markers in QUALIFIER_MARKERS.items()
+            if any(_contains_marker(generated_text, marker) for marker in markers)
+        }
+        expected_numbers = set(re.findall(r"\d+(?:[.,]\d+)?", expected))
+        generated_numbers = set(re.findall(r"\d+(?:[.,]\d+)?", generated_text))
+        expected_units = {
+            category
+            for category, markers in UNIT_MARKERS.items()
+            if any(_contains_marker(expected, marker) for marker in markers)
+        }
+        generated_units = {
+            category
+            for category, markers in UNIT_MARKERS.items()
+            if any(_contains_marker(generated_text, marker) for marker in markers)
+        }
+        details.append({
+            "expected_fingerprint": fingerprint(expected),
+            "individual_generated_point_overlap_count": individual_matches,
+            "aggregate_generated_point_overlap": aggregate_match,
+            "split_across_generated_points_candidate": split_candidate,
+            "language_relation": language_relation,
+            "expected_qualifier_marker_count": len(expected_qualifiers),
+            "missing_qualifier_marker_count": len(expected_qualifiers - generated_qualifiers),
+            "expected_qualifier_category_count": len(expected_categories),
+            "missing_qualifier_category_count": len(expected_categories - generated_categories),
+            "expected_numeric_literal_count": len(expected_numbers),
+            "matched_numeric_literal_count": len(expected_numbers & generated_numbers),
+            "expected_unit_category_count": len(expected_units),
+            "matched_unit_category_count": len(expected_units & generated_units),
+        })
+
+    for generated_point in generated:
+        expected_overlap_count = sum(
+            _token_overlap_supported(point, generated_point) for point in expected_points
+        )
+        multi_expected_generated_points += expected_overlap_count >= 2
+
+    return {
+        "answer_point_composition_diagnostic_version": "answer-point-composition-v1",
+        "answer_point_composition_is_heuristic": True,
+        "aggregate_generated_token_overlap_answer_point_count": aggregate_matches,
+        "expected_points_with_split_overlap_candidate_count": split_candidates,
+        "generated_points_with_multi_expected_overlap_candidate_count": multi_expected_generated_points,
+        "language_relation_counts": language_counts,
+        "answer_point_composition_diagnostics": details,
+    }
+
+
 def _answer_point_diagnostics(
     expected_points: Sequence[str],
     generated_points: Sequence[str],
@@ -181,6 +318,7 @@ def _answer_point_diagnostics(
             }
             for index, (point, exact, token) in enumerate(zip(expected, evidence_exact, evidence_token))
         ],
+        **_answer_point_composition_diagnostics(expected, generated),
     }
 
 
