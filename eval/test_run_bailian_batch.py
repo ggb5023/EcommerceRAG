@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -175,3 +176,26 @@ def test_batch_failure_stops_and_records_failed_batch(tmp_path, monkeypatch):
     data = json.loads(checkpoint.read_text(encoding="utf-8"))
     assert data["status"] == "FAILED"
     assert data["failed_batch"]["batch_id"] == "batch-001"
+
+
+def test_live_rejects_existing_report_before_provider_config_or_network(tmp_path):
+    output = tmp_path / "existing-report.json"
+    output.write_text("{}\n", encoding="utf-8")
+    args = SimpleNamespace(
+        cases=MODULE.DEFAULT_REVISION_ROOT / "synthetic-m2-v1-revision-1.jsonl",
+        metadata=MODULE.DEFAULT_REVISION_ROOT / "synthetic-m2-v1-revision-1.metadata.json",
+        corpus=MODULE.DEFAULT_REVISION_ROOT / "documents.jsonl",
+        alignment=MODULE.DEFAULT_REVISION_ROOT / "alignment-revision-1.json",
+        answer_evidence=MODULE.DEFAULT_CONTEXT_REVIEW,
+        batch_size=5,
+        document_batch_size=16,
+        output=output,
+        live=True,
+        env=tmp_path / "missing-provider.env",
+        checkpoint=tmp_path / "checkpoint.json",
+        resume=False,
+        max_requests=240,
+        max_requests_per_minute=60,
+        max_cost_units=240,
+    )
+    assert asyncio.run(MODULE.main_async(args)) == 2

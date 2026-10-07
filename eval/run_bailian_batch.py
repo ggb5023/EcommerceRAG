@@ -435,7 +435,7 @@ async def main_async(args: argparse.Namespace) -> int:
         args.cases, args.corpus, args.alignment, args.answer_evidence,
         batch_size=args.batch_size, document_batch_size=args.document_batch_size,
     )
-    if args.output and args.output.exists():
+    if args.live and args.output and args.output.exists():
         print(json.dumps({"status": "FAIL", "issues": ["output_exists"], "online_requests_made": False}))
         return 2
     if not args.live:
