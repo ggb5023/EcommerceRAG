@@ -42,6 +42,12 @@ DEFAULT_CORPUS = Path(
 DEFAULT_ALIGNMENT = DEFAULT_CORPUS.with_name("alignment-revision-1.json")
 DEFAULT_METADATA = ROOT / "eval" / "synthetic_cases.metadata.json"
 DEFAULT_ENV = Path("/etc/ecommerce-rag/providers.env")
+GENERATION_INSTRUCTION = (
+    "Return concise answer_points supported directly by the evidence. Preserve "
+    "important product names, numbers, dates, units, and qualifiers exactly as "
+    "they appear in the evidence. Do not invent facts or weaken a restriction; "
+    "omit a point when the evidence does not support it."
+)
 
 
 def sha256(path: Path) -> str:
@@ -60,6 +66,15 @@ def tokens(value: str) -> set[str]:
         for size in (2, 3, 4):
             result.update(run[index : index + size] for index in range(len(run) - size + 1))
     return result
+
+
+def _token_overlap_supported(expected: str, generated: str, *, threshold: float = 0.5) -> bool:
+    """Report a diagnostic overlap without treating it as answer acceptance."""
+    expected_tokens = tokens(expected)
+    generated_tokens = tokens(generated)
+    if not expected_tokens or not generated_tokens:
+        return False
+    return len(expected_tokens & generated_tokens) / len(expected_tokens) >= threshold
 
 
 def cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -327,9 +342,26 @@ async def run_live(
                 "case_id": case_id,
             })
             rerank_rows = _rank_by_rerank(rerank_result, rerank_candidates)
-            evidence = "\n\n".join(str(chunk.get("content", "")) for chunk in rerank_candidates[:5])
+            rerank_order = {
+                row["chunk_id"]: index
+                for index, row in enumerate(rerank_rows)
+                if row.get("chunk_id")
+            }
+            evidence_chunks = sorted(
+                rerank_candidates,
+                key=lambda chunk: rerank_order.get(chunk.get("chunk_id"), len(rerank_rows)),
+            )
+            evidence = "\n\n".join(
+                str(chunk.get("content", "")) for chunk in evidence_chunks[:5]
+            )
             schema = {"name": "answer", "schema": {"type": "object", "required": ["answer_points"], "properties": {"answer_points": {"type": "array", "items": {"type": "string"}}}}}
-            generation = await provider.generate([{"role": "user", "content": f"Query: {query}\nEvidence:\n{evidence}"}], response_schema=schema)
+            generation = await provider.generate([{
+                "role": "user",
+                "content": (
+                    f"{GENERATION_INSTRUCTION}\n\n"
+                    f"Query: {query}\nEvidence:\n{evidence}"
+                ),
+            }], response_schema=schema)
             slot_reports.append({
                 **_meta("generation", generation),
                 "operation": "generation",
@@ -344,6 +376,10 @@ async def run_live(
                 generated_points = []
             expected_points = [str(point) for point in case.get("expected_answer_points", [])]
             matched_points = sum(any(point in str(generated) for generated in generated_points) for point in expected_points)
+            normalized_matched_points = sum(
+                any(_token_overlap_supported(point, str(generated)) for generated in generated_points)
+                for point in expected_points
+            )
             results.append({
                 "case_id": case_id,
                 "expected_document_ids": sorted(expected_ids),
@@ -354,6 +390,9 @@ async def run_live(
                 "generation_structured": generation.structured is not None,
                 "expected_answer_point_count": len(expected_points),
                 "matched_answer_point_count": matched_points,
+                "normalized_answer_point_match_count": normalized_matched_points,
+                "answer_point_match_method": "exact_substring_v1",
+                "normalized_answer_point_diagnostic": "token_overlap_v1",
                 "latency_ms": round((time.monotonic() - case_started) * 1000, 1),
             })
         except ProviderError as error:
