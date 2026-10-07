@@ -106,6 +106,7 @@ def validate_review(
         "approved_point_count": 0,
         "unresolved_point_count": 0,
         "point_count": sum(_case_points(cases).values()),
+        "approved_support_chunk_ids": {},
         "issues": [],
     }
     try:
@@ -144,6 +145,9 @@ def validate_review(
         case_id: _approved_chunk_ids(case_id, alignment) for case_id in expected_points
     }
     flags: dict[str, list[bool]] = {case_id: [False] * count for case_id, count in expected_points.items()}
+    support_chunks = {
+        case_id: [[] for _ in range(count)] for case_id, count in expected_points.items()
+    }
     seen: set[tuple[str, int]] = set()
     for row in rows:
         if not isinstance(row, Mapping):
@@ -186,6 +190,7 @@ def validate_review(
             if basis != APPROVED_BASIS:
                 issues.append(f"approved_basis_invalid:{case_id}:{point_index}")
             flags[case_id][point_index] = True
+            support_chunks[case_id][point_index] = list(chunk_ids)
             summary["approved_point_count"] += 1
         else:
             if not isinstance(row.get("review_notes_code"), str) or not row["review_notes_code"]:
@@ -206,4 +211,5 @@ def validate_review(
     summary["issues"] = sorted(set(issues))
     if summary["issues"]:
         return {}, summary
+    summary["approved_support_chunk_ids"] = support_chunks
     return flags, summary

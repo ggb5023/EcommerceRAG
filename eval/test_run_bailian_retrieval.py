@@ -2,7 +2,10 @@ import asyncio
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
+
+import pytest
 
 SPEC = importlib.util.spec_from_file_location(
     "run_bailian_retrieval", Path(__file__).with_name("run_bailian_retrieval.py")
@@ -49,6 +52,7 @@ def test_reviewed_evidence_separates_source_alignment_from_generation_rewrite():
         ["适合20至26摄氏度且应保持干燥"],
         ["建议在室内约20至26摄氏度、干燥且通风正常"],
         "商品资料建议在室内约 20 至 26 摄氏度、干燥且通风正常的环境中使用。",
+        [True],
         [True],
     )
     assert diagnostics["evidence_exact_answer_point_match_count"] == 0
@@ -131,6 +135,7 @@ def test_live_runner_keeps_provider_payloads_out_of_report():
         "expected_doc_ids": ["label-doc"],
         "expected_answer_points": ["product evidence"],
         "authorization": {"tenant_id": "tenant-a", "shop_id": "shop-a"},
+        "business_date": "2026-10-01",
     }]
     corpus = [{
         "document_id": "actual-doc",
@@ -139,6 +144,8 @@ def test_live_runner_keeps_provider_payloads_out_of_report():
         "chunks": [{
             "chunk_id": "chunk-1",
             "document_id": "actual-doc",
+            "tenant_id": "tenant-a",
+            "shop_id": "shop-a",
             "content": "product evidence",
             "disclosure_class": "external_allowed",
         }],
@@ -200,6 +207,7 @@ def test_generation_evidence_uses_rerank_order():
         "query": "product query",
         "expected_answer_points": ["reranked evidence"],
         "authorization": {"tenant_id": "tenant-a", "shop_id": "shop-a"},
+        "business_date": "2026-10-01",
     }]
     corpus = [{
         "document_id": "doc-a",
@@ -208,6 +216,8 @@ def test_generation_evidence_uses_rerank_order():
         "chunks": [{
             "chunk_id": "chunk-a",
             "document_id": "doc-a",
+            "tenant_id": "tenant-a",
+            "shop_id": "shop-a",
             "content": "embedding-first evidence",
             "disclosure_class": "external_allowed",
         }],
@@ -218,6 +228,8 @@ def test_generation_evidence_uses_rerank_order():
         "chunks": [{
             "chunk_id": "chunk-b",
             "document_id": "doc-b",
+            "tenant_id": "tenant-a",
+            "shop_id": "shop-a",
             "content": "reranked evidence",
             "disclosure_class": "external_allowed",
         }],
@@ -228,3 +240,186 @@ def test_generation_evidence_uses_rerank_order():
     assert report["status"] == "PASS"
     assert "reranked evidence" in provider.prompt
     assert provider.prompt.index("reranked evidence") < provider.prompt.index("embedding-first evidence")
+
+
+def _case(case_id="case-1", *, tenant="tenant-a", shop="shop-a"):
+    return {
+        "case_id": case_id,
+        "query": case_id,
+        "expected_answer_points": ["source evidence"],
+        "authorization": {"tenant_id": tenant, "shop_id": shop},
+        "business_date": "2026-10-01",
+    }
+
+
+def _document(document_id, *, tenant="tenant-a", shop="shop-a", **policy):
+    scope = {"tenant_id": tenant, "shop_id": shop}
+    return {
+        "document_id": document_id,
+        "document_version_id": f"version-{document_id}",
+        **scope,
+        "chunks": [{
+            "chunk_id": f"chunk-{document_id}",
+            "document_id": document_id,
+            "document_version_id": f"version-{document_id}",
+            "chunk_hash": "f" * 64,
+            **scope,
+            "content": f"source evidence {document_id}",
+            "disclosure_class": "external_allowed",
+            **policy,
+        }],
+    }
+
+
+class _RecordingProvider:
+    def __init__(self, rerank_indices=None):
+        self.rerank_indices = rerank_indices
+        self.calls = []
+        self.prompts = []
+        self.candidates = []
+
+    async def embed(self, texts, **kwargs):
+        self.calls.append("embedding")
+        return [SimpleNamespace(dense=(1.0, 0.0), model="model", request_id="request", usage={}) for _ in texts]
+
+    async def rerank(self, query, candidates, **kwargs):
+        self.calls.append("rerank")
+        self.candidates.append(candidates)
+        indices = range(min(kwargs["top_n"], len(candidates))) if self.rerank_indices is None else self.rerank_indices
+        return SimpleNamespace(
+            items=[SimpleNamespace(index=index, score=0.9) for index in indices],
+            model="model", request_id="request", usage={},
+        )
+
+    async def generate(self, messages, **kwargs):
+        self.calls.append("generation")
+        self.prompts.append(messages[0]["content"])
+        return SimpleNamespace(
+            structured={"answer_points": ["source evidence"]},
+            model="model", request_id="request", usage={},
+        )
+
+
+def test_batch_cases_keep_each_tenant_and_shop_candidates_separate():
+    provider = _RecordingProvider()
+    cases = [_case("case-a"), _case("case-b", tenant="tenant-b"), _case("case-c", shop="shop-b")]
+    corpus = [_document("doc-a"), _document("doc-b", tenant="tenant-b"), _document("doc-c", shop="shop-b")]
+    report = asyncio.run(MODULE.run_live(provider, cases, corpus, {}))
+    assert report["status"] == "PASS"
+    for index, document_id in enumerate(("doc-a", "doc-b", "doc-c")):
+        row = report["case_results"][index]
+        assert {result["document_id"] for result in row["embedding_top5"]} == {document_id}
+        assert provider.candidates[index] == [f"source evidence {document_id}"]
+        assert row["generation_evidence"][0]["document_id"] == document_id
+        for other_id in {"doc-a", "doc-b", "doc-c"} - {document_id}:
+            assert other_id not in provider.prompts[index]
+
+
+def test_expired_future_and_internal_chunks_never_reach_provider():
+    provider = _RecordingProvider()
+    corpus = [
+        _document("current", effective_from="2026-10-01", effective_to="2026-10-02"),
+        _document("expired", effective_to="2026-10-01"),
+        _document("future", effective_from="2026-10-02"),
+        _document("internal", disclosure_class="internal_only"),
+        _document("unclassified", disclosure_class="unclassified"),
+    ]
+    report = asyncio.run(MODULE.run_live(provider, [_case()], corpus, {}))
+    assert report["status"] == "PASS"
+    assert provider.candidates == [["source evidence current"]]
+    assert [row["document_id"] for row in report["case_results"][0]["generation_evidence"]] == ["current"]
+    assert all(word not in provider.prompts[0] for word in ("expired", "future", "internal", "unclassified"))
+
+
+def test_document_expiry_and_chunk_scope_drift_cannot_bypass_filter():
+    document = _document("expired-document")
+    document["effective_to"] = "2026-10-01"
+    other = _document("drifted-chunk")
+    other["chunks"][0]["shop_id"] = "shop-other"
+    provider = _RecordingProvider()
+    report = asyncio.run(MODULE.run_live(provider, [_case()], [document, other], {}))
+    assert report["status"] == "FAIL"
+    assert report["issues"] == ["no_eligible_chunks"]
+    assert provider.calls == []
+
+
+def test_partial_rerank_does_not_append_unreturned_candidates_or_approve_missing_evidence():
+    provider = _RecordingProvider(rerank_indices=[0])
+    report = asyncio.run(MODULE.run_live(
+        provider, [_case()], [_document("a"), _document("b")], {},
+        answer_evidence={"case-1": [True]},
+        answer_evidence_chunks={"case-1": [["chunk-a", "chunk-b"]]},
+    ))
+    row = report["case_results"][0]
+    assert [item["chunk_id"] for item in row["generation_evidence"]] == ["chunk-a"]
+    assert "doc-b" not in provider.prompts[0]
+    assert "source evidence b" not in provider.prompts[0]
+    assert row["approved_evidence_answer_point_match_count"] == 1
+    assert row["delivered_approved_evidence_answer_point_match_count"] == 0
+    assert row["approved_support_chunk_coverage"] == [{
+        "point_index": 0, "required_chunk_count": 2, "delivered_chunk_count": 1, "all_delivered": False,
+    }]
+    assert row["evidence_supported_answer_point_count"] == 0
+    assert row["answer_point_diagnostic_counts"] == {"approved_evidence_not_delivered": 1}
+    assert row["answer_quality_status"] == "NOT_RUN"
+
+
+def test_reviewed_support_requires_all_bound_chunks_in_generation_context():
+    provider = _RecordingProvider()
+    report = asyncio.run(MODULE.run_live(
+        provider, [_case()], [_document("a"), _document("b")], {},
+        answer_evidence={"case-1": [True]},
+        answer_evidence_chunks={"case-1": [["chunk-a", "chunk-b"]]},
+    ))
+    row = report["case_results"][0]
+    assert row["delivered_approved_evidence_answer_point_match_count"] == 1
+    assert row["answer_point_diagnostic_counts"] == {"generated_supported": 1}
+    packed = json.dumps(report)
+    assert "source evidence" not in packed
+    assert "Query:" not in packed
+    assert row["answer_quality_status"] == "NOT_RUN"
+
+
+def test_review_flags_without_chunk_binding_cannot_claim_delivered_evidence():
+    diagnostics = MODULE._answer_point_diagnostics(["source evidence"], ["source evidence"], "source evidence", [True])
+    assert diagnostics["approved_evidence_answer_point_match_count"] == 1
+    assert diagnostics["delivered_approved_evidence_answer_point_match_count"] == 0
+    assert diagnostics["answer_point_diagnostic_counts"] == {"approved_evidence_not_delivered": 1}
+
+
+def test_support_binding_larger_than_top_five_is_not_claimed_as_delivered():
+    provider = _RecordingProvider()
+    corpus = [_document(str(index)) for index in range(6)]
+    report = asyncio.run(MODULE.run_live(
+        provider, [_case()], corpus, {},
+        answer_evidence={"case-1": [True]},
+        answer_evidence_chunks={"case-1": [[f"chunk-{index}" for index in range(6)]]},
+    ))
+    row = report["case_results"][0]
+    assert len(row["generation_evidence"]) == 5
+    assert row["approved_support_chunk_coverage"] == [{
+        "point_index": 0, "required_chunk_count": 6, "delivered_chunk_count": 5, "all_delivered": False,
+    }]
+    assert row["answer_point_diagnostic_counts"] == {"approved_evidence_not_delivered": 1}
+
+
+def test_empty_rerank_does_not_generate_from_unranked_candidates():
+    provider = _RecordingProvider(rerank_indices=[])
+    report = asyncio.run(MODULE.run_live(provider, [_case()], [_document("a")], {}))
+    assert report["status"] == "FAIL"
+    assert report["case_results"][0]["error_code"] == "no_rerank_evidence"
+    assert "generation" not in provider.calls
+
+
+@pytest.mark.parametrize("invalid_date", [None, "20261001", "2026-02-30", "", True])
+def test_invalid_business_date_fails_before_provider_calls(invalid_date):
+    provider = _RecordingProvider()
+    case = {**_case(), "business_date": invalid_date}
+    with pytest.raises(ValueError):
+        asyncio.run(MODULE.run_live(provider, [case], [_document("a")], {}))
+    assert provider.calls == []
+
+
+def test_invalid_effective_date_is_reported_as_input_integrity_issue():
+    document = _document("a", effective_from="2026-10-02", effective_to="2026-10-01")
+    assert MODULE.validate_corpus_versions([document]) == ["corpus_chunk_dates_invalid:chunk-a"]

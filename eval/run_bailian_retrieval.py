@@ -19,6 +19,7 @@ import re
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +85,7 @@ def _answer_point_diagnostics(
     generated_points: Sequence[str],
     evidence: str,
     approved_evidence_supported: Sequence[bool] | None = None,
+    delivered_approved_evidence_supported: Sequence[bool] | None = None,
 ) -> dict[str, Any]:
     """Summarize answer-point support without retaining source or model text."""
     expected = [point for point in expected_points if isinstance(point, str) and point.strip()]
@@ -107,17 +109,30 @@ def _answer_point_diagnostics(
         reviewed_support = [bool(value) for value in approved_evidence_supported]
     else:
         reviewed_support = [False] * len(expected)
+    if delivered_approved_evidence_supported is not None:
+        if len(delivered_approved_evidence_supported) != len(expected):
+            raise ValueError("delivered evidence support count does not match expected points")
+        delivered_support = [
+            reviewed and bool(delivered)
+            for reviewed, delivered in zip(reviewed_support, delivered_approved_evidence_supported)
+        ]
+    else:
+        delivered_support = [False] * len(expected)
     evidence_supported = [
-        lexical or reviewed
-        for lexical, reviewed in zip(evidence_token, reviewed_support)
+        delivered if approved_evidence_supported is not None else lexical
+        for lexical, delivered in zip(evidence_token, delivered_support)
     ]
     classifications: list[str] = []
-    for evidence_is_supported, exact, token_match in zip(
+    for reviewed, delivered, evidence_is_supported, exact, token_match in zip(
+        reviewed_support,
+        delivered_support,
         evidence_supported,
         generated_exact,
         generated_token,
     ):
-        if not evidence_is_supported:
+        if reviewed and not delivered:
+            classification = "approved_evidence_not_delivered"
+        elif not evidence_is_supported:
             classification = "evidence_unsupported"
         elif not generated:
             classification = "generation_empty"
@@ -131,6 +146,7 @@ def _answer_point_diagnostics(
         for name in (
             "generated_supported",
             "evidence_unsupported",
+            "approved_evidence_not_delivered",
             "generation_empty",
             "generation_rewrite_mismatch",
         )
@@ -143,6 +159,7 @@ def _answer_point_diagnostics(
         "evidence_exact_answer_point_match_count": sum(evidence_exact),
         "evidence_token_overlap_answer_point_match_count": sum(evidence_token),
         "approved_evidence_answer_point_match_count": sum(reviewed_support),
+        "delivered_approved_evidence_answer_point_match_count": sum(delivered_support),
         "evidence_supported_answer_point_count": sum(evidence_supported),
         "generated_exact_answer_point_match_count": sum(generated_exact),
         "generated_token_overlap_answer_point_match_count": sum(generated_token),
@@ -153,6 +170,7 @@ def _answer_point_diagnostics(
                 "evidence_exact_supported": exact,
                 "evidence_token_overlap_supported": token,
                 "approved_evidence_supported": reviewed_support[index],
+                "delivered_approved_evidence_supported": delivered_support[index],
                 "evidence_supported": evidence_supported[index],
                 "generated_exact_supported": generated_exact[index],
                 "generated_token_overlap_supported": generated_token[index],
@@ -201,6 +219,11 @@ def load_inputs(
         return [], [], {}, [f"input_invalid:{type(error).__name__}"]
     if len(cases) != 60:
         issues.append(f"case_count:{len(cases)}")
+    for case in cases:
+        try:
+            _calendar_date(case.get("business_date"))
+        except ValueError:
+            issues.append(f"business_date_invalid:{case.get('case_id', '<missing>')}")
     if metadata.get("sha256") != sha256(cases_path):
         issues.append("case_sha256_mismatch")
     if alignment.get("status") != "APPROVED":
@@ -233,6 +256,10 @@ def validate_corpus_versions(corpus: Sequence[Mapping[str, Any]]) -> list[str]:
             continue
         if not isinstance(tenant_id, str) or not tenant_id or not isinstance(shop_id, str) or not shop_id:
             issues.append(f"corpus_document_scope_invalid:{document_id or '<missing>'}")
+        try:
+            _in_business_date(document, date.min)
+        except ValueError:
+            issues.append(f"corpus_document_dates_invalid:{document_id or '<missing>'}")
         chunks = document.get("chunks", [])
         if not isinstance(chunks, list):
             issues.append(f"corpus_chunks_invalid:{document_id or '<missing>'}")
@@ -254,6 +281,10 @@ def validate_corpus_versions(corpus: Sequence[Mapping[str, Any]]) -> list[str]:
                 issues.append(f"corpus_chunk_version_mismatch:{chunk_id or '<missing>'}")
             if chunk.get("tenant_id") != tenant_id or chunk.get("shop_id") != shop_id:
                 issues.append(f"corpus_chunk_scope_mismatch:{chunk_id or '<missing>'}")
+            try:
+                _in_business_date(chunk, date.min)
+            except ValueError:
+                issues.append(f"corpus_chunk_dates_invalid:{chunk_id or '<missing>'}")
     return sorted(set(issues))
 
 
@@ -289,17 +320,42 @@ def _expected_actual_ids(case: dict[str, Any], alignment: Mapping[str, Any]) -> 
 
 def _eligible_chunks(case: dict[str, Any], corpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
     authorization = case.get("authorization", {})
+    if not isinstance(authorization, Mapping):
+        return []
     tenant_id = authorization.get("tenant_id")
     shop_id = authorization.get("shop_id")
+    if not isinstance(tenant_id, str) or not tenant_id or not isinstance(shop_id, str) or not shop_id:
+        return []
+    current = _calendar_date(case.get("business_date"))
     chunks: list[dict[str, Any]] = []
     for document in corpus:
         if document.get("tenant_id") != tenant_id or document.get("shop_id") != shop_id:
             continue
+        if not _in_business_date(document, current):
+            continue
         for chunk in document.get("chunks", []):
             if not isinstance(chunk, dict) or chunk.get("disclosure_class") != "external_allowed":
                 continue
+            if chunk.get("tenant_id") != tenant_id or chunk.get("shop_id") != shop_id:
+                continue
+            if not _in_business_date(chunk, current):
+                continue
             chunks.append(chunk)
     return chunks
+
+
+def _calendar_date(value: object) -> date:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        raise ValueError("invalid calendar date")
+    return date.fromisoformat(value)
+
+
+def _in_business_date(row: Mapping[str, Any], current: date) -> bool:
+    start = _calendar_date(row["effective_from"]) if row.get("effective_from") is not None else None
+    end = _calendar_date(row["effective_to"]) if row.get("effective_to") is not None else None
+    if start and end and end <= start:
+        raise ValueError("invalid effective date range")
+    return not ((start and current < start) or (end and current >= end))
 
 
 def _rank_by_embedding(
@@ -348,12 +404,13 @@ def not_run_report(
     issues: list[str],
 ) -> dict[str, Any]:
     return {
-        "report_version": "bailian-retrieval-v2",
+        "report_version": "bailian-retrieval-v3",
         "provider_profile": "aliyun-bailian",
         "input_sha256": sha256(cases_path) if cases_path.is_file() else None,
         "corpus_sha256": sha256(corpus_path) if corpus_path.is_file() else None,
         "alignment_sha256": sha256(alignment_path) if alignment_path.is_file() else None,
         "model_quality_claim": False,
+        "answer_quality_status": "NOT_RUN",
         "real_service_acceptance": False,
         "m1_connected": False,
         "online_requests_made": False,
@@ -371,12 +428,16 @@ async def run_live(
     *,
     batch_size: int = 16,
     answer_evidence: Mapping[str, Sequence[bool]] | None = None,
+    answer_evidence_chunks: Mapping[str, Sequence[Sequence[str]]] | None = None,
 ) -> dict[str, Any]:
     selected_chunks: list[dict[str, Any]] = []
-    for case in cases:
-        for chunk in _eligible_chunks(case, corpus):
+    eligible_by_case = {str(case["case_id"]): _eligible_chunks(case, corpus) for case in cases}
+    for chunks in eligible_by_case.values():
+        for chunk in chunks:
             if chunk not in selected_chunks:
                 selected_chunks.append(chunk)
+    if not selected_chunks:
+        return {"status": "FAIL", "issues": ["no_eligible_chunks"], "case_results": [], "slot_reports": []}
     documents = [str(chunk.get("content", "")) for chunk in selected_chunks]
     slot_reports: list[dict[str, Any]] = []
     document_embeddings: list[Any] = []
@@ -398,12 +459,19 @@ async def run_live(
             "slot_reports": slot_reports,
         }
     results: list[dict[str, Any]] = []
+    embedding_by_chunk = {
+        chunk["chunk_id"]: embedding for chunk, embedding in zip(selected_chunks, document_embeddings)
+    }
     for case in cases:
         case_id = str(case["case_id"])
         expected_ids = _expected_actual_ids(case, alignment)
         query = str(case.get("query", ""))
         case_started = time.monotonic()
         try:
+            eligible_chunks = eligible_by_case[case_id]
+            if not eligible_chunks:
+                results.append({"case_id": case_id, "status": "FAIL", "error_code": "no_eligible_chunks"})
+                continue
             query_result = await provider.embed(
                 [query],
                 text_type="query",
@@ -415,8 +483,8 @@ async def run_live(
                 "operation": "query",
                 "case_id": case_id,
             })
-            embedding_rows = _rank_by_embedding(query_result[0].dense, [item.dense for item in document_embeddings], selected_chunks, 10)
-            rerank_candidates = [chunk for chunk in selected_chunks if chunk.get("chunk_id") in {row["chunk_id"] for row in embedding_rows}]
+            embedding_rows = _rank_by_embedding(query_result[0].dense, [embedding_by_chunk[chunk["chunk_id"]].dense for chunk in eligible_chunks], eligible_chunks, 10)
+            rerank_candidates = [chunk for chunk in eligible_chunks if chunk.get("chunk_id") in {row["chunk_id"] for row in embedding_rows}]
             embedding_order = {row["chunk_id"]: index for index, row in enumerate(embedding_rows)}
             rerank_candidates.sort(key=lambda item: embedding_order.get(item.get("chunk_id"), len(embedding_rows)))
             if not rerank_candidates:
@@ -429,17 +497,13 @@ async def run_live(
                 "case_id": case_id,
             })
             rerank_rows = _rank_by_rerank(rerank_result, rerank_candidates)
-            rerank_order = {
-                row["chunk_id"]: index
-                for index, row in enumerate(rerank_rows)
-                if row.get("chunk_id")
-            }
-            evidence_chunks = sorted(
-                rerank_candidates,
-                key=lambda chunk: rerank_order.get(chunk.get("chunk_id"), len(rerank_rows)),
-            )
+            candidate_by_id = {chunk["chunk_id"]: chunk for chunk in rerank_candidates}
+            evidence_chunks = [candidate_by_id[row["chunk_id"]] for row in rerank_rows[:5]]
+            if not evidence_chunks:
+                results.append({"case_id": case_id, "status": "FAIL", "error_code": "no_rerank_evidence"})
+                continue
             evidence = "\n\n".join(
-                str(chunk.get("content", "")) for chunk in evidence_chunks[:5]
+                str(chunk.get("content", "")) for chunk in evidence_chunks
             )
             schema = {"name": "answer", "schema": {"type": "object", "required": ["answer_points"], "properties": {"answer_points": {"type": "array", "items": {"type": "string"}}}}}
             generation = await provider.generate([{
@@ -463,11 +527,20 @@ async def run_live(
                 generated_points = []
             generated_points = [point for point in generated_points if isinstance(point, str)]
             expected_points = [str(point) for point in case.get("expected_answer_points", [])]
+            delivered_ids = {chunk["chunk_id"] for chunk in evidence_chunks}
+            required_chunks = (answer_evidence_chunks or {}).get(case_id, [])
+            if required_chunks and len(required_chunks) != len(expected_points):
+                raise ValueError("approved evidence chunk count does not match expected points")
+            delivered_support = [
+                bool(chunk_ids) and set(chunk_ids).issubset(delivered_ids)
+                for chunk_ids in required_chunks
+            ] if required_chunks else [False] * len(expected_points)
             answer_diagnostics = _answer_point_diagnostics(
                 expected_points,
                 generated_points,
                 evidence,
                 (answer_evidence or {}).get(case_id),
+                delivered_support,
             )
             results.append({
                 "case_id": case_id,
@@ -477,6 +550,24 @@ async def run_live(
                 "embedding_hit_at_5": _hit(embedding_rows, expected_ids),
                 "rerank_hit_at_5": _hit(rerank_rows, expected_ids),
                 "generation_structured": generation.structured is not None,
+                "generation_evidence": [
+                    {
+                        key: chunk.get(key)
+                        for key in ("chunk_id", "document_id", "document_version_id", "chunk_hash")
+                    }
+                    for chunk in evidence_chunks
+                ],
+                "approved_support_coverage_method": "all_bound_chunks_v1",
+                "approved_support_chunk_coverage": [
+                    {
+                        "point_index": index,
+                        "required_chunk_count": len(chunk_ids),
+                        "delivered_chunk_count": len(set(chunk_ids) & delivered_ids),
+                        "all_delivered": delivered_support[index],
+                    }
+                    for index, chunk_ids in enumerate(required_chunks)
+                ],
+                "answer_quality_status": "NOT_RUN",
                 "expected_answer_point_count": len(expected_points),
                 **answer_diagnostics,
                 "matched_answer_point_count": answer_diagnostics["generated_exact_answer_point_match_count"],
@@ -531,19 +622,21 @@ async def main_async(args: argparse.Namespace) -> int:
             corpus,
             alignment,
             answer_evidence=answer_evidence,
+            answer_evidence_chunks=answer_review.get("approved_support_chunk_ids", {}),
         )
     except (ProviderConfigError, ValueError) as error:
         report = not_run_report(args.cases, args.corpus, args.alignment, [f"configuration:{type(error).__name__}"])
         print(json.dumps({"status": report["status"], "issues": report["issues"], "real_service_acceptance": False}, ensure_ascii=False))
         return 3
     report = {
-        "report_version": "bailian-retrieval-v2",
+        "report_version": "bailian-retrieval-v3",
         "provider_profile": "aliyun-bailian",
         "case_count": len(selected),
         "input_sha256": sha256(args.cases),
         "corpus_sha256": sha256(args.corpus),
         "alignment_sha256": sha256(args.alignment),
         "model_quality_claim": False,
+        "answer_quality_status": "NOT_RUN",
         "real_service_acceptance": False,
         "m1_connected": False,
         "online_requests_made": True,

@@ -231,9 +231,11 @@ fingerprints, usage presence, and structured-output counts. It never writes
 vectors, prompts, generated text, customer data, or database/M1 state. The
 default limit is three cases to keep the experiment within the reviewed quota.
 
-The current isolated report is outside the repository at
-`/var/lib/ecommerce-rag/real-docs/reports/bailian-retrieval-current.json`.
-It is `real_service_acceptance=false` and `model_quality_claim=false`. A
+The prior revision-1 v2 report is outside the repository at
+`/var/lib/ecommerce-rag/real-docs/reports/bailian-retrieval-revision-1-current.json`.
+The v3 evaluator has offline regression coverage; a new v3 online run is
+`NOT_RUN`. Reports retain `real_service_acceptance=false`,
+`model_quality_claim=false`, and `answer_quality_status=NOT_RUN`. A
 successful transport and retrieval ranking run does not approve model quality,
 answer quality, real merchant data, identity, or online customer service.
 
@@ -250,13 +252,29 @@ all 60 points are approved, `unresolved_point_count=0`, and the sidecar status
 is `APPROVED`. The older v1 sidecar with 59 of 60 points and `syn-005` marked
 `needs_revision` remains historical evidence and is not overwritten.
 
-When supplied with `--answer-evidence`, `run_bailian_retrieval.py` records the
-review status and counts, then separates `evidence_unsupported` from
-`generation_rewrite_mismatch`. This is an experiment diagnostic only. The
-latest revision-1 report has approved evidence support for all five selected
-cases, but all five are `generation_rewrite_mismatch` with exact/token
-answer-point match 0/5. It does not claim answer quality or real-service
-acceptance.
+When supplied with `--answer-evidence`, the v3 evaluator distinguishes approved
+source support from approved chunks actually delivered to generation. Every
+case ranks only its own tenant/shop, `external_allowed`, and business-date
+eligible chunks. Effective end dates are exclusive. Document embeddings may
+be batched across cases, but ranking, rerank candidates, and generation
+contexts stay within each case's scope. Generation uses only chunks returned
+by rerank; an empty rerank result fails without calling generation.
+
+The metadata-only `generation_evidence` records chunk/document/version IDs and
+chunk hashes. `approved_support_chunk_coverage` compares each answer point's
+sidecar bindings against that actual context. The conservative
+`all_bound_chunks_v1` method requires every bound chunk to be delivered;
+approved source support alone cannot count as delivered support. Missing
+bound chunks produce `approved_evidence_not_delivered`, separately from
+`evidence_unsupported`, `generation_empty`, and `generation_rewrite_mismatch`.
+Lexical exact/token matches do not assess semantic answer quality.
+
+The prior revision-1 v2 report recorded source approval for all five selected
+cases and `generation_rewrite_mismatch` with exact/token match 0/5. It did not
+prove that all approved support reached the generation context. Some sidecar
+points bind more chunks than the top-five context can hold. Resolve evidence
+bindings and context composition before treating lexical mismatch as a
+generation defect; retain prior reports and immutable inputs unchanged.
 
 ## Isolated Bailian pgvector evaluation
 

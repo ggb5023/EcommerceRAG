@@ -53,6 +53,7 @@ def test_valid_review_returns_point_support_flags(tmp_path):
     assert summary["issues"] == []
     assert summary["approved_point_count"] == 1
     assert flags == {"case-1": [True]}
+    assert summary["approved_support_chunk_ids"] == {"case-1": [["chunk-1"]]}
 
 
 def test_pending_review_keeps_unresolved_point_false(tmp_path):
@@ -61,6 +62,7 @@ def test_pending_review_keeps_unresolved_point_false(tmp_path):
     assert summary["status"] == "PENDING_REVIEW"
     assert summary["unresolved_point_count"] == 1
     assert flags == {"case-1": [False]}
+    assert summary["approved_support_chunk_ids"] == {"case-1": [[]]}
 
 
 def test_hash_drift_fails_closed(tmp_path):
@@ -71,6 +73,7 @@ def test_hash_drift_fails_closed(tmp_path):
     review_path.write_text(json.dumps(review), encoding="utf-8")
     flags, summary = validate_review(*paths[3:4], *paths[:3], *paths[4:])
     assert flags == {}
+    assert summary["approved_support_chunk_ids"] == {}
     assert "review_cases_sha256_mismatch" in summary["issues"]
 
 
