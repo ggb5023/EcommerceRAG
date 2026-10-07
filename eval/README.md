@@ -300,6 +300,41 @@ revoked/expired cases; their evidence must not enter generation. The audit
 retains `generation_context_selection=NOT_RUN` and
 `answer_quality_status=NOT_RUN`.
 
+### Bounded context-v2 batch runner
+
+`run_bailian_batch.py` is the next step after the offline audit. It selects
+only the 53 `WITHIN_BUDGET` revision-1 cases and keeps all seven
+`INELIGIBLE_REQUIRED_CHUNKS` cases out of provider calls. It uses the same
+scope, disclosure, business-date, alignment and evidence-sidecar checks as
+the single-window evaluator, then groups cases deterministically by `case_id`.
+
+The runner has explicit `--max-requests`, `--max-requests-per-minute`, and
+`--max-cost-units` gates. A cost unit is one provider request equivalent, not
+a currency estimate. Document embedding calls are counted by document batch;
+each eligible case additionally reserves one query embedding, one rerank and
+one generation request. The default plan is 53 cases in batches of five, an
+estimated 236 request equivalents, and a 240 request/cost ceiling. The
+rolling RPM gate waits before making a request; total or cost exhaustion
+fails closed.
+
+Without `--live`, the command prints the partition and estimate and makes no
+network request or credential read:
+
+```bash
+python3 eval/run_bailian_batch.py --plan
+```
+
+Live execution is an independently approved, metadata-only experiment. It
+stores a restricted checkpoint after each successful batch and stops on the
+first provider, budget, or batch failure. `--resume` requires an exact input
+hash and plan identity; a changed case, corpus, alignment, review, or batch
+size cannot reuse the checkpoint. Reports and checkpoints contain IDs,
+counts, redacted metadata and hashes only, with
+`real_service_acceptance=false`, `m1_connected=false`, and
+`answer_quality_status=NOT_RUN`. A passing batch run still does not mean
+semantic answer quality, real merchant data, or M2 customer-service
+acceptance.
+
 ### Answer Composition Diagnostics
 
 Each case also reports `answer-point-composition-v1`, a metadata-only heuristic
