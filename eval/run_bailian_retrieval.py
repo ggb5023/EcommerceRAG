@@ -77,6 +77,75 @@ def _token_overlap_supported(expected: str, generated: str, *, threshold: float 
     return len(expected_tokens & generated_tokens) / len(expected_tokens) >= threshold
 
 
+def _answer_point_diagnostics(
+    expected_points: Sequence[str],
+    generated_points: Sequence[str],
+    evidence: str,
+) -> dict[str, Any]:
+    """Summarize answer-point support without retaining source or model text."""
+    expected = [point for point in expected_points if isinstance(point, str) and point.strip()]
+    generated = [point for point in generated_points if isinstance(point, str) and point.strip()]
+    evidence_exact = [point in evidence for point in expected]
+    evidence_token = [
+        _token_overlap_supported(point, evidence)
+        for point in expected
+    ]
+    generated_exact = [
+        any(point in candidate for candidate in generated)
+        for point in expected
+    ]
+    generated_token = [
+        any(_token_overlap_supported(point, candidate) for candidate in generated)
+        for point in expected
+    ]
+    classifications: list[str] = []
+    for evidence_supported, exact, token_match in zip(
+        evidence_token,
+        generated_exact,
+        generated_token,
+    ):
+        if not evidence_supported:
+            classification = "evidence_unsupported"
+        elif not generated:
+            classification = "generation_empty"
+        elif exact or token_match:
+            classification = "generated_supported"
+        else:
+            classification = "generation_rewrite_mismatch"
+        classifications.append(classification)
+    classification_counts = {
+        name: classifications.count(name)
+        for name in (
+            "generated_supported",
+            "evidence_unsupported",
+            "generation_empty",
+            "generation_rewrite_mismatch",
+        )
+        if name in classifications
+    }
+    return {
+        "expected_answer_point_fingerprints": [fingerprint(point) for point in expected],
+        "generated_answer_point_fingerprints": [fingerprint(point) for point in generated],
+        "generated_answer_point_count": len(generated),
+        "evidence_exact_answer_point_match_count": sum(evidence_exact),
+        "evidence_token_overlap_answer_point_match_count": sum(evidence_token),
+        "generated_exact_answer_point_match_count": sum(generated_exact),
+        "generated_token_overlap_answer_point_match_count": sum(generated_token),
+        "answer_point_diagnostic_counts": classification_counts,
+        "answer_point_diagnostics": [
+            {
+                "expected_fingerprint": fingerprint(point),
+                "evidence_exact_supported": exact,
+                "evidence_token_overlap_supported": token,
+                "generated_exact_supported": generated_exact[index],
+                "generated_token_overlap_supported": generated_token[index],
+                "classification": classifications[index],
+            }
+            for index, (point, exact, token) in enumerate(zip(expected, evidence_exact, evidence_token))
+        ],
+    }
+
+
 def cosine(left: Sequence[float], right: Sequence[float]) -> float:
     if len(left) != len(right) or not left:
         return 0.0
@@ -262,7 +331,7 @@ def not_run_report(
     issues: list[str],
 ) -> dict[str, Any]:
     return {
-        "report_version": "bailian-retrieval-v1",
+        "report_version": "bailian-retrieval-v2",
         "provider_profile": "aliyun-bailian",
         "input_sha256": sha256(cases_path) if cases_path.is_file() else None,
         "corpus_sha256": sha256(corpus_path) if corpus_path.is_file() else None,
@@ -374,12 +443,9 @@ async def run_live(
             )
             if not isinstance(generated_points, list):
                 generated_points = []
+            generated_points = [point for point in generated_points if isinstance(point, str)]
             expected_points = [str(point) for point in case.get("expected_answer_points", [])]
-            matched_points = sum(any(point in str(generated) for generated in generated_points) for point in expected_points)
-            normalized_matched_points = sum(
-                any(_token_overlap_supported(point, str(generated)) for generated in generated_points)
-                for point in expected_points
-            )
+            answer_diagnostics = _answer_point_diagnostics(expected_points, generated_points, evidence)
             results.append({
                 "case_id": case_id,
                 "expected_document_ids": sorted(expected_ids),
@@ -389,8 +455,9 @@ async def run_live(
                 "rerank_hit_at_5": _hit(rerank_rows, expected_ids),
                 "generation_structured": generation.structured is not None,
                 "expected_answer_point_count": len(expected_points),
-                "matched_answer_point_count": matched_points,
-                "normalized_answer_point_match_count": normalized_matched_points,
+                **answer_diagnostics,
+                "matched_answer_point_count": answer_diagnostics["generated_exact_answer_point_match_count"],
+                "normalized_answer_point_match_count": answer_diagnostics["generated_token_overlap_answer_point_match_count"],
                 "answer_point_match_method": "exact_substring_v1",
                 "normalized_answer_point_diagnostic": "token_overlap_v1",
                 "latency_ms": round((time.monotonic() - case_started) * 1000, 1),
@@ -424,7 +491,7 @@ async def main_async(args: argparse.Namespace) -> int:
         print(json.dumps({"status": report["status"], "issues": report["issues"], "real_service_acceptance": False}, ensure_ascii=False))
         return 3
     report = {
-        "report_version": "bailian-retrieval-v1",
+        "report_version": "bailian-retrieval-v2",
         "provider_profile": "aliyun-bailian",
         "case_count": len(selected),
         "input_sha256": sha256(args.cases),

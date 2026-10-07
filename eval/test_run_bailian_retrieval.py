@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import json
 from pathlib import Path
+from typing import ClassVar
 
 SPEC = importlib.util.spec_from_file_location(
     "run_bailian_retrieval", Path(__file__).with_name("run_bailian_retrieval.py")
@@ -20,6 +21,27 @@ def test_cosine_is_stable_and_zero_safe():
 def test_token_overlap_is_diagnostic_and_thresholded():
     assert MODULE._token_overlap_supported("配送需要 2-5 个工作日", "配送通常需要 2-5 个工作日")
     assert not MODULE._token_overlap_supported("配送需要 2-5 个工作日", "完全不同的商品规格")
+
+
+def test_answer_point_diagnostics_distinguish_evidence_and_generation_gaps():
+    diagnostics = MODULE._answer_point_diagnostics(
+        ["配送需要 2-5 个工作日", "规格需要人工确认", "未提供的事实"],
+        ["配送通常需要 2-5 个工作日", "完全不同的回答"],
+        "标准配送需要 2-5 个工作日。规格需要人工确认。",
+    )
+    assert diagnostics["generated_answer_point_count"] == 2
+    assert all(len(value) == 12 for value in diagnostics["expected_answer_point_fingerprints"])
+    assert all(len(value) == 12 for value in diagnostics["generated_answer_point_fingerprints"])
+    assert diagnostics["evidence_token_overlap_answer_point_match_count"] == 2
+    assert diagnostics["generated_token_overlap_answer_point_match_count"] == 1
+    assert diagnostics["answer_point_diagnostic_counts"] == {
+        "generated_supported": 1,
+        "generation_rewrite_mismatch": 1,
+        "evidence_unsupported": 1,
+    }
+    empty = MODULE._answer_point_diagnostics(["可回答的事实"], [], "可回答的事实")
+    assert empty["answer_point_diagnostic_counts"] == {"generation_empty": 1}
+    assert all("配送" not in json.dumps(diagnostics, ensure_ascii=False) for _ in [0])
 
 
 def test_no_live_flag_is_explicitly_not_run(tmp_path):
@@ -46,7 +68,7 @@ def test_metadata_is_redacted():
     class Result:
         model = "secret-model-id"
         request_id = "full-request-id"
-        usage = {"total_tokens": 1}
+        usage: ClassVar[dict[str, int]] = {"total_tokens": 1}
 
     metadata = MODULE._meta("embedding", [Result()])
     assert metadata["metadata_complete"] is True
@@ -70,10 +92,10 @@ def test_live_runner_keeps_provider_payloads_out_of_report():
             self.usage = {"total_tokens": 1}
 
     class Generation:
-        structured = {"answer_points": ["supported point"]}
+        structured: ClassVar[dict[str, list[str]]] = {"answer_points": ["product evidence"]}
         model = "model"
         request_id = "request"
-        usage = {"total_tokens": 1}
+        usage: ClassVar[dict[str, int]] = {"total_tokens": 1}
 
     class Provider:
         def __init__(self):
@@ -93,7 +115,7 @@ def test_live_runner_keeps_provider_payloads_out_of_report():
         "case_id": "case-1",
         "query": "product query",
         "expected_doc_ids": ["label-doc"],
-        "expected_answer_points": ["supported point"],
+        "expected_answer_points": ["product evidence"],
         "authorization": {"tenant_id": "tenant-a", "shop_id": "shop-a"},
     }]
     corpus = [{
@@ -114,6 +136,8 @@ def test_live_runner_keeps_provider_payloads_out_of_report():
     assert report["case_results"][0]["rerank_hit_at_5"] is True
     assert all("content" not in row for row in report["case_results"])
     assert report["case_results"][0]["normalized_answer_point_match_count"] == 1
+    assert report["case_results"][0]["generated_answer_point_count"] == 1
+    assert report["case_results"][0]["answer_point_diagnostic_counts"] == {"generated_supported": 1}
     prompt = provider.generation_messages[0][0]["content"]
     assert MODULE.GENERATION_INSTRUCTION in prompt
     assert "product evidence" in prompt
@@ -130,17 +154,17 @@ def test_generation_evidence_uses_rerank_order():
     class Rerank:
         model = "model"
         request_id = "request"
-        usage = {"total_tokens": 1}
-        items = [
+        usage: ClassVar[dict[str, int]] = {"total_tokens": 1}
+        items: ClassVar[list[object]] = [
             type("Item", (), {"index": 1, "score": 0.99})(),
             type("Item", (), {"index": 0, "score": 0.01})(),
         ]
 
     class Generation:
-        structured = {"answer_points": ["reranked evidence"]}
+        structured: ClassVar[dict[str, list[str]]] = {"answer_points": ["reranked evidence"]}
         model = "model"
         request_id = "request"
-        usage = {"total_tokens": 1}
+        usage: ClassVar[dict[str, int]] = {"total_tokens": 1}
 
     class Provider:
         def __init__(self):
