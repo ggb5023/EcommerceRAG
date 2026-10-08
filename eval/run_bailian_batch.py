@@ -306,6 +306,56 @@ def _load_checkpoint(path: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
     return dict(checkpoint)
 
 
+def _validate_checkpoint_batches(checkpoint: Mapping[str, Any], plan: Mapping[str, Any]) -> None:
+    """Reject checkpoints that could skip or invent deterministic batches."""
+    completed = checkpoint.get("completed_batches", [])
+    batches = plan.get("batches", [])
+    if len(completed) > len(batches):
+        raise BatchPlanError("checkpoint_completed_batch_count_invalid")
+    previous_requests = 0
+    previous_cost = 0
+    for index, record in enumerate(completed):
+        if not isinstance(record, Mapping):
+            raise BatchPlanError("checkpoint_completed_batch_invalid")
+        expected = batches[index]
+        expected_id = f"batch-{index + 1:03d}"
+        if record.get("batch_id") != expected_id:
+            raise BatchPlanError("checkpoint_completed_batches_not_prefix")
+        expected_case_ids = [str(case["case_id"]) for case in expected]
+        if record.get("case_ids") != expected_case_ids:
+            raise BatchPlanError("checkpoint_case_ids_mismatch")
+        if record.get("status") != "PASS":
+            raise BatchPlanError("checkpoint_completed_batch_status_invalid")
+        if not isinstance(record.get("case_results", []), list) or not isinstance(record.get("slot_reports", []), list):
+            raise BatchPlanError("checkpoint_batch_payload_invalid")
+        request_count = record.get("request_count", 0)
+        cost_units = record.get("cost_units", request_count)
+        if (
+            not isinstance(request_count, int)
+            or isinstance(request_count, bool)
+            or request_count < previous_requests
+            or not isinstance(cost_units, int)
+            or isinstance(cost_units, bool)
+            or cost_units < previous_cost
+        ):
+            raise BatchPlanError("checkpoint_batch_budget_invalid")
+        previous_requests = request_count
+        previous_cost = cost_units
+    if int(checkpoint.get("request_count", 0)) < previous_requests:
+        raise BatchPlanError("checkpoint_request_count_mismatch")
+    if int(checkpoint.get("cost_units", 0)) < previous_cost:
+        raise BatchPlanError("checkpoint_cost_units_mismatch")
+    if checkpoint.get("status") == "COMPLETE" and len(completed) != len(batches):
+        raise BatchPlanError("checkpoint_complete_batch_count_invalid")
+
+
+def _record_budget(checkpoint: dict[str, Any], budget: RequestBudget) -> None:
+    """Persist every consumed request, including requests before a failure."""
+    checkpoint["request_count"] = budget.total_requests
+    checkpoint["cost_units"] = budget.cost_units
+    checkpoint["recent_request_timestamps"] = budget.recent_wall_timestamps()
+
+
 async def run_batches(
     provider: Any,
     plan: Mapping[str, Any],
@@ -330,6 +380,7 @@ async def run_batches(
         checkpoint = _load_checkpoint(checkpoint_path, identity)
     else:
         checkpoint = _checkpoint_payload(identity, plan)
+    _validate_checkpoint_batches(checkpoint, plan)
     completed = {str(row.get("batch_id")): row for row in checkpoint.get("completed_batches", [])}
     budget = RequestBudget(
         max_requests=max_requests,
@@ -363,6 +414,7 @@ async def run_batches(
                 answer_evidence_chunks=plan["support_chunks"],
             )
         except (ProviderError, RequestBudgetExceeded, ValueError) as error:
+            _record_budget(checkpoint, budget)
             checkpoint["status"] = "FAILED"
             checkpoint["failed_batch"] = {
                 "batch_id": batch_id,
@@ -377,6 +429,7 @@ async def run_batches(
             "case_ids": case_ids,
             "status": run.get("status", "FAIL"),
             "request_count": budget.total_requests,
+            "cost_units": budget.cost_units,
             "slot_reports": run.get("slot_reports", []),
             "case_results": run.get("case_results", []),
         }
@@ -393,8 +446,7 @@ async def run_batches(
         completed[batch_id] = batch_record
         slot_reports.extend(batch_record["slot_reports"])
         checkpoint["completed_batches"] = list(completed.values())
-        checkpoint["request_count"] = budget.total_requests
-        checkpoint["cost_units"] = budget.cost_units
+        _record_budget(checkpoint, budget)
         checkpoint["recent_request_timestamps"] = budget.recent_wall_timestamps()
         if checkpoint_path:
             _atomic_json(checkpoint_path, checkpoint, replace=True)

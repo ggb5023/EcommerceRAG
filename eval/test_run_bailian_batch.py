@@ -178,6 +178,76 @@ def test_batch_failure_stops_and_records_failed_batch(tmp_path, monkeypatch):
     assert data["failed_batch"]["batch_id"] == "batch-001"
 
 
+def test_provider_failure_checkpoint_preserves_consumed_budget(tmp_path, monkeypatch):
+    class Provider:
+        async def embed(self, texts):
+            return []
+
+    async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
+        await provider.embed(["fixture"])
+        raise MODULE.ProviderError("upstream_error", "fixture failure")
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", fake_run_live)
+    checkpoint = tmp_path / "checkpoint.json"
+    with pytest.raises(MODULE.ProviderError, match="fixture failure"):
+        asyncio.run(
+            MODULE.run_batches(
+                Provider(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=4,
+                max_requests_per_minute=4,
+                max_cost_units=4,
+                document_batch_size=16,
+                checkpoint_path=checkpoint,
+            )
+        )
+    data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert data["status"] == "FAILED"
+    assert data["request_count"] == 1
+    assert data["cost_units"] == 1
+    assert len(data["recent_request_timestamps"]) == 1
+
+
+def test_resume_rejects_checkpoint_that_skips_a_batch(tmp_path):
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "checkpoint_version": "bailian-batch-checkpoint-v1",
+                "identity": {"cases_sha256": "a", "batch_size": 1},
+                "status": "RUNNING",
+                "eligible_case_count": 2,
+                "excluded_case_count": 0,
+                "completed_batches": [
+                    {"batch_id": "batch-002", "case_ids": ["b"], "status": "PASS", "case_results": [], "slot_reports": []}
+                ],
+                "failed_batch": None,
+                "request_count": 0,
+                "cost_units": 0,
+                "recent_request_timestamps": [],
+                "real_service_acceptance": False,
+                "m1_connected": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(MODULE.BatchPlanError, match="checkpoint_completed_batches_not_prefix"):
+        asyncio.run(
+            MODULE.run_batches(
+                object(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=4,
+                max_requests_per_minute=4,
+                max_cost_units=4,
+                document_batch_size=16,
+                checkpoint_path=checkpoint,
+                resume=True,
+            )
+        )
+
+
 def test_resume_restores_consumed_budget_before_new_provider_calls(tmp_path, monkeypatch):
     calls = []
 
