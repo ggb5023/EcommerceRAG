@@ -619,3 +619,85 @@ def test_live_rejects_existing_report_before_provider_config_or_network(tmp_path
         max_cost_units=240,
     )
     assert asyncio.run(MODULE.main_async(args)) == 2
+
+
+def test_failed_batch_retains_redacted_diagnostics_and_stops(tmp_path, monkeypatch):
+    calls = []
+
+    async def failing(provider, cases, corpus, alignment, **kwargs):
+        assert kwargs["fail_fast"] is True
+        calls.append(cases[0]["case_id"])
+        return {"status": "FAIL", "issues": ["embedding:timeout", "sensitive vendor text"],
+                "case_results": [{"case_id": cases[0]["case_id"], "status": "FAIL",
+                                  "error_code": "schema_error", "raw_text": "sensitive response"}]}
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", failing)
+    checkpoint = tmp_path / "checkpoint.json"
+    with pytest.raises(MODULE.BatchPlanError, match="batch_failed"):
+        asyncio.run(MODULE.run_batches(
+            object(), _small_plan(), identity={}, max_requests=4,
+            max_requests_per_minute=4, max_cost_units=4, document_batch_size=16,
+            checkpoint_path=checkpoint,
+        ))
+    assert calls == ["a"]
+    saved = json.loads(checkpoint.read_text())
+    assert saved["failed_batch"]["diagnostics"] == {
+        "case_statuses": [{"case_id": "a", "status": "FAIL", "error_code": "schema_error"}],
+        "issues": ["embedding:timeout", "unclassified_failure"],
+    }
+    assert "sensitive" not in checkpoint.read_text()
+
+
+def test_checkpoint_report_preserves_legacy_failure_and_remaining_budget():
+    plan = _small_plan()
+    checkpoint = MODULE._checkpoint_payload({}, plan)
+    checkpoint.update({
+        "status": "FAILED", "request_count": 2, "cost_units": 2,
+        "completed_batches": [_completed_record("batch-001", ["a"], request_count=1, cost_units=1)],
+        "failed_batch": {"batch_id": "batch-002", "case_ids": ["b"], "error_code": "batch_failed", "reserved_request_count": 1},
+    })
+    report = MODULE.report_checkpoint(checkpoint, plan, {}, {
+        "max_requests": 2, "max_cost_units": 2, "max_requests_per_minute": 2,
+    })
+    assert report["status"] == "FAILED"
+    assert report["completed_case_count"] == report["unmeasured_case_count"] == 1
+    assert report["new_provider_requests"] == 0
+    assert report["actual_request_count"] == 2
+    assert report["remaining_estimated_request_count"] == 1
+    assert report["minimum_total_request_limit_for_resume"] == 3
+    assert report["resume_within_current_limits"] is False
+    assert report["failed_batch"]["failure_detail_status"] == "UNAVAILABLE_LEGACY_CHECKPOINT"
+    checkpoint["completed_batches"][0]["case_results"][0]["status"] = "FAIL"
+    with pytest.raises(MODULE.BatchPlanError, match="payload_hash_mismatch"):
+        MODULE.report_checkpoint(checkpoint, plan, {}, {})
+
+
+def test_offline_checkpoint_export_never_loads_provider_config(tmp_path, monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Provider config or network access is forbidden")
+
+    monkeypatch.setattr(MODULE, "ensure_secure_config_file", forbidden)
+    monkeypatch.setattr(MODULE, "load_provider_config", forbidden)
+    monkeypatch.setattr(MODULE, "build_provider", forbidden)
+    plan = _small_plan()
+    monkeypatch.setattr(MODULE, "build_plan", lambda *a, **kw: {**plan, "eligible_cases": [{}] * 53, "excluded_cases": [{}] * 7})
+    monkeypatch.setattr(MODULE.retrieval, "load_inputs", lambda *a: ([], [], {}, []))
+    monkeypatch.setattr(MODULE, "validate_review", lambda *a: ({}, {"status": "APPROVED", "approved_support_chunk_ids": {}}))
+    monkeypatch.setattr(MODULE, "_identity", lambda *a, **kw: {})
+    checkpoint = tmp_path / "checkpoint.json"
+    data = MODULE._checkpoint_payload({}, {**plan, "eligible_cases": [{}] * 53, "excluded_cases": [{}] * 7})
+    data.update({"status": "FAILED", "failed_batch": {"batch_id": "batch-001", "case_ids": ["a"], "error_code": "batch_failed", "reserved_request_count": 0}})
+    checkpoint.write_text(json.dumps(data))
+    original = checkpoint.read_bytes()
+    args = SimpleNamespace(
+        cases=None, corpus=None, alignment=None, metadata=None, answer_evidence=None,
+        batch_size=1, document_batch_size=16, report_checkpoint=True, live=False,
+        checkpoint=checkpoint, output=tmp_path / "report.json",
+        max_requests=4, max_requests_per_minute=4, max_cost_units=4,
+    )
+    assert asyncio.run(MODULE.main_async(args)) == 0
+    assert checkpoint.read_bytes() == original
+    report = json.loads(args.output.read_text())
+    assert report["status"] == "FAILED" and report["new_provider_requests"] == 0
+    assert args.output.stat().st_mode & 0o777 == 0o600
+    assert asyncio.run(MODULE.main_async(args)) == 2

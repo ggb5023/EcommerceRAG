@@ -501,6 +501,22 @@ def test_empty_rerank_does_not_generate_from_unranked_candidates():
     assert "generation" not in provider.calls
 
 
+@pytest.mark.parametrize("provider_failure", [False, True])
+def test_fail_fast_stops_later_cases_on_provider_or_evidence_failure(provider_failure):
+    class Provider(_RecordingProvider):
+        async def generate(self, messages, **kwargs):
+            raise MODULE.ProviderError("schema_error", "sensitive vendor error")
+
+    provider = Provider() if provider_failure else _RecordingProvider(rerank_indices=[])
+    report = asyncio.run(MODULE.run_live(
+        provider, [_case("first"), _case("later")], [_document("a")], {}, fail_fast=True,
+    ))
+    assert report["status"] == "FAIL"
+    assert [row["case_id"] for row in report["case_results"]] == ["first"]
+    assert provider.calls.count("rerank") == 1
+    assert "sensitive vendor error" not in json.dumps(report)
+
+
 @pytest.mark.parametrize("invalid_date", [None, "20261001", "2026-02-30", "", True])
 def test_invalid_business_date_fails_before_provider_calls(invalid_date):
     provider = _RecordingProvider()

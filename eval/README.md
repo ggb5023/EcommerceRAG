@@ -326,7 +326,10 @@ python3 eval/run_bailian_batch.py --plan
 
 Live execution is an independently approved, metadata-only experiment. It
 stores a restricted checkpoint after each successful batch and stops on the
-first provider, budget, or batch failure. `--resume` requires an exact input
+first provider, budget, or case failure, without calling later cases in that
+batch. New failed checkpoints retain only case IDs, known error classifications,
+and consumed request counts; exception messages and responses are discarded.
+`--resume` requires an exact input
 hash and plan identity; a changed case, corpus, alignment, review, or batch
 size cannot reuse the checkpoint. Reports and checkpoints contain IDs,
 counts, redacted metadata and hashes only, with
@@ -334,6 +337,24 @@ counts, redacted metadata and hashes only, with
 `answer_quality_status=NOT_RUN`. A passing batch run still does not mean
 semantic answer quality, real merchant data, or M2 customer-service
 acceptance.
+
+For a stopped run, export its verified progress without reading Provider
+configuration or making requests:
+
+```bash
+python3 eval/run_bailian_batch.py --report-checkpoint \
+  --checkpoint /restricted/path/run.checkpoint.json \
+  --output /restricted/path/run-failed.json
+```
+
+This does not modify the checkpoint. The report distinguishes completed cases,
+unmeasured cases, excluded cases, and missing legacy failure details. It retains
+the failed status and reports the estimated requests required to rerun the
+unfinished batch and finish the plan. Already reserved requests remain spent;
+resume can exceed the original window even when the original plan fit it.
+The exporter checks input identity and completed payload hashes, uses mode
+`0600`, and refuses to overwrite existing evidence. A successful export is
+not a successful evaluation or authorization to raise the request limit.
 
 ### Answer Composition Diagnostics
 

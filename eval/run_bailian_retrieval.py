@@ -633,6 +633,7 @@ async def run_live(
     batch_size: int = 16,
     answer_evidence: Mapping[str, Sequence[bool]] | None = None,
     answer_evidence_chunks: Mapping[str, Sequence[Sequence[str]]] | None = None,
+    fail_fast: bool = False,
 ) -> dict[str, Any]:
     selected_chunks: list[dict[str, Any]] = []
     eligible_by_case = {str(case["case_id"]): _eligible_chunks(case, corpus) for case in cases}
@@ -675,6 +676,8 @@ async def run_live(
             eligible_chunks = eligible_by_case[case_id]
             if not eligible_chunks:
                 results.append({"case_id": case_id, "status": "FAIL", "error_code": "no_eligible_chunks"})
+                if fail_fast:
+                    break
                 continue
             query_result = await provider.embed(
                 [query],
@@ -693,6 +696,8 @@ async def run_live(
             rerank_candidates.sort(key=lambda item: embedding_order.get(item.get("chunk_id"), len(embedding_rows)))
             if not rerank_candidates:
                 results.append({"case_id": case_id, "status": "FAIL", "error_code": "no_candidates"})
+                if fail_fast:
+                    break
                 continue
             rerank_result = await provider.rerank(query, [str(chunk.get("content", "")) for chunk in rerank_candidates], top_n=min(GENERATION_CONTEXT_CHUNK_LIMIT, len(rerank_candidates)))
             slot_reports.append({
@@ -705,6 +710,8 @@ async def run_live(
             evidence_chunks = [candidate_by_id[row["chunk_id"]] for row in rerank_rows[:GENERATION_CONTEXT_CHUNK_LIMIT]]
             if not evidence_chunks:
                 results.append({"case_id": case_id, "status": "FAIL", "error_code": "no_rerank_evidence"})
+                if fail_fast:
+                    break
                 continue
             evidence = "\n\n".join(
                 str(chunk.get("content", "")) for chunk in evidence_chunks
@@ -782,6 +789,8 @@ async def run_live(
             })
         except ProviderError as error:
             results.append({"case_id": case_id, "status": "FAIL", "error_code": error.code})
+            if fail_fast:
+                break
     return {
         "status": "PASS" if all(row.get("status") != "FAIL" for row in results) else "FAIL",
         "slot_reports": slot_reports,

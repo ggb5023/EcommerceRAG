@@ -55,6 +55,13 @@ DEFAULT_CHECKPOINT = Path(
     "bailian-retrieval-revision-1-context-v2-batches.checkpoint.json"
 )
 
+SAFE_FAILURE_CODES = {
+    "authentication", "cancelled", "config_blocked", "http_error",
+    "invalid_input", "invalid_request", "invalid_response", "rate_limited",
+    "schema_error", "timeout", "upstream_error", "vendor_error",
+    "no_eligible_chunks", "no_candidates", "no_rerank_evidence", "batch_failed",
+}
+
 
 class BatchPlanError(ValueError):
     """A deterministic plan or budget cannot be trusted."""
@@ -491,6 +498,81 @@ def _record_budget(checkpoint: dict[str, Any], budget: RequestBudget) -> None:
     checkpoint["recent_request_timestamps"] = budget.recent_wall_timestamps()
 
 
+def _failure_diagnostics(run: Mapping[str, Any], case_ids: Sequence[str]) -> dict[str, Any]:
+    """Retain only case identity and known failure codes, never exception text."""
+    rows = []
+    seen: set[str] = set()
+    for row in run.get("case_results", []):
+        case_id = row.get("case_id")
+        if case_id not in case_ids or case_id in seen:
+            raise BatchPlanError("failed_case_identity_invalid")
+        seen.add(case_id)
+        item = {"case_id": case_id, "status": "FAIL" if row.get("status") == "FAIL" else "COMPLETED"}
+        if item["status"] == "FAIL":
+            code = row.get("error_code")
+            item["error_code"] = code if isinstance(code, str) and code in SAFE_FAILURE_CODES else "unclassified_failure"
+        rows.append(item)
+    issues = []
+    for issue in run.get("issues", []):
+        parts = str(issue).split(":", 1)
+        code = parts[-1]
+        if code not in SAFE_FAILURE_CODES:
+            issues.append("unclassified_failure")
+        elif len(parts) == 2 and parts[0] in {"embedding", "rerank", "generation"}:
+            issues.append(":".join(parts))
+        else:
+            issues.append(code)
+    return {"case_statuses": rows, "issues": sorted(set(issues))}
+
+
+def report_checkpoint(
+    checkpoint: Mapping[str, Any], plan: Mapping[str, Any],
+    identity: Mapping[str, Any], limits: Mapping[str, int],
+) -> dict[str, Any]:
+    """Export verified checkpoint progress offline; never infer missing results."""
+    _validate_checkpoint_batches(checkpoint, plan)
+    completed = checkpoint["completed_batches"]
+    failed = checkpoint.get("failed_batch")
+    results = [row for batch in completed for row in batch["case_results"]]
+    slots = [row for batch in completed for row in batch["slot_reports"]]
+    run = {
+        "status": "PASS" if checkpoint["status"] == "COMPLETE" else checkpoint["status"],
+        "case_results": results, "slot_reports": slots,
+        "request_count": checkpoint["request_count"], "cost_units": checkpoint["cost_units"],
+        "online_requests_made": checkpoint["request_count"] > 0,
+    }
+    report = make_report(plan, run, identity, limits)
+    remaining = sum(plan["estimated_requests_per_batch"][len(completed):])
+    required = checkpoint["request_count"] + remaining
+    diagnostics = failed.get("diagnostics") if failed is not None else None
+    if diagnostics is not None:
+        if not isinstance(diagnostics, Mapping):
+            raise BatchPlanError("failed_diagnostics_invalid")
+        diagnostics = _failure_diagnostics({
+            "case_results": diagnostics.get("case_statuses", []),
+            "issues": diagnostics.get("issues", []),
+        }, failed["case_ids"])
+    report.update({
+        "report_origin": "verified_checkpoint_offline_export",
+        "new_provider_requests": 0,
+        "request_count_definition": "reserved request equivalents, not confirmed responses or currency",
+        "completed_batch_count": len(completed),
+        "completed_case_count": len(results),
+        "unmeasured_case_count": len(plan["eligible_cases"]) - len(results),
+        "remaining_estimated_request_count": remaining,
+        "minimum_total_request_limit_for_resume": required,
+        "resume_within_current_limits": required <= min(limits["max_requests"], limits["max_cost_units"]),
+        "failed_batch": None if failed is None else {
+            "batch_id": failed["batch_id"], "case_ids": failed["case_ids"],
+            "error_code": failed["error_code"] if failed["error_code"] in SAFE_FAILURE_CODES else "unclassified_failure",
+            "reserved_request_count": failed["reserved_request_count"],
+            "diagnostics": diagnostics,
+            "failure_detail_status": "AVAILABLE" if failed.get("diagnostics") is not None else "UNAVAILABLE_LEGACY_CHECKPOINT",
+        },
+    })
+    return report
+
+
 async def run_batches(
     provider: Any,
     plan: Mapping[str, Any],
@@ -574,6 +656,7 @@ async def run_batches(
                 batch_size=document_batch_size,
                 answer_evidence=plan["answer_evidence"],
                 answer_evidence_chunks=plan["support_chunks"],
+                fail_fast=True,
             )
         except (ProviderError, RequestBudgetExceeded, ValueError) as error:
             _record_budget(checkpoint, budget)
@@ -607,6 +690,7 @@ async def run_batches(
                 "case_ids": case_ids,
                 "error_code": "batch_failed",
                 "reserved_request_count": reserved_request_count,
+                "diagnostics": _failure_diagnostics(run, case_ids),
             }
             _record_budget(checkpoint, budget)
             if checkpoint_path:
@@ -730,6 +814,26 @@ async def main_async(args: argparse.Namespace) -> int:
         args.cases, args.corpus, args.alignment, args.answer_evidence,
         batch_size=args.batch_size, document_batch_size=args.document_batch_size,
     )
+    if getattr(args, "report_checkpoint", False):
+        if args.output.exists():
+            print(json.dumps({"status": "FAIL", "issues": ["output_exists"], "new_provider_requests": 0}))
+            return 2
+        try:
+            checkpoint = _load_checkpoint(args.checkpoint, identity)
+            report = report_checkpoint(checkpoint, plan, identity, {
+                "max_requests": args.max_requests,
+                "max_requests_per_minute": args.max_requests_per_minute,
+                "max_cost_units": args.max_cost_units,
+            })
+            retrieval.write_report(args.output, report)
+        except (BatchPlanError, ValueError, OSError) as error:
+            print(json.dumps({"status": "FAIL", "issues": [type(error).__name__], "new_provider_requests": 0}))
+            return 2
+        print(json.dumps({key: report[key] for key in (
+            "status", "completed_case_count", "unmeasured_case_count", "actual_request_count",
+            "remaining_estimated_request_count", "resume_within_current_limits", "new_provider_requests",
+        )}))
+        return 0
     if args.live and args.output and args.output.exists():
         print(json.dumps({"status": "FAIL", "issues": ["output_exists"], "online_requests_made": False}))
         return 2
@@ -779,6 +883,7 @@ def parse_args() -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--live", action="store_true")
     mode.add_argument("--plan", action="store_true", help="validate and print the bounded plan")
+    mode.add_argument("--report-checkpoint", action="store_true", help="export checkpoint progress offline without reading Provider configuration")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--document-batch-size", type=int, default=16)
