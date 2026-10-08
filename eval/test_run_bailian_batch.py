@@ -105,6 +105,20 @@ def _small_plan():
     }
 
 
+def _completed_record(batch_id, case_ids, *, request_count=0, cost_units=0):
+    record = {
+        "batch_id": batch_id,
+        "case_ids": list(case_ids),
+        "status": "PASS",
+        "request_count": request_count,
+        "cost_units": cost_units,
+        "slot_reports": [],
+        "case_results": [{"case_id": case_id, "status": "PASS"} for case_id in case_ids],
+    }
+    record["payload_sha256"] = MODULE._batch_payload_sha256(record)
+    return record
+
+
 def test_batch_resume_skips_completed_batches_and_preserves_identity(tmp_path, monkeypatch):
     calls = []
 
@@ -207,6 +221,228 @@ def test_provider_failure_checkpoint_preserves_consumed_budget(tmp_path, monkeyp
     assert data["request_count"] == 1
     assert data["cost_units"] == 1
     assert len(data["recent_request_timestamps"]) == 1
+    assert data["active_batch"] is None
+    assert data["failed_batch"]["reserved_request_count"] == 1
+
+
+def test_unexpected_interruption_persists_active_batch_budget_and_resume_reuses_it(tmp_path, monkeypatch):
+    class Provider:
+        async def embed(self, texts):
+            raise KeyboardInterrupt()
+
+    async def interrupted_run(provider, cases, corpus, alignment, **kwargs):
+        await provider.embed(["fixture"])
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", interrupted_run)
+    checkpoint = tmp_path / "checkpoint.json"
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(
+            MODULE.run_batches(
+                Provider(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=4,
+                max_requests_per_minute=4,
+                max_cost_units=4,
+                document_batch_size=16,
+                checkpoint_path=checkpoint,
+            )
+        )
+    interrupted = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert interrupted["status"] == "RUNNING"
+    assert interrupted["request_count"] == 1
+    assert interrupted["cost_units"] == 1
+    assert interrupted["active_batch"] == {
+        "batch_id": "batch-001",
+        "case_ids": ["a"],
+        "reserved_request_count": 1,
+    }
+
+    calls = []
+
+    class ResumingProvider:
+        async def embed(self, texts):
+            return []
+
+    async def resumed_run(provider, cases, corpus, alignment, **kwargs):
+        await provider.embed(["fixture"])
+        calls.append([case["case_id"] for case in cases])
+        return {"status": "PASS", "case_results": [{"case_id": cases[0]["case_id"], "status": "PASS"}]}
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", resumed_run)
+    result = asyncio.run(
+        MODULE.run_batches(
+            ResumingProvider(),
+            _small_plan(),
+            identity={"cases_sha256": "a", "batch_size": 1},
+            max_requests=4,
+            max_requests_per_minute=4,
+            max_cost_units=4,
+            document_batch_size=16,
+            checkpoint_path=checkpoint,
+            resume=True,
+        )
+    )
+    assert result["status"] == "PASS"
+    assert result["request_count"] == 3
+    assert calls == [["a"], ["b"]]
+
+
+def test_resume_rejects_tampered_completed_batch_payload(tmp_path, monkeypatch):
+    async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
+        return {"status": "PASS", "case_results": [{"case_id": cases[0]["case_id"], "status": "PASS"}]}
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", fake_run_live)
+    checkpoint = tmp_path / "checkpoint.json"
+    asyncio.run(
+        MODULE.run_batches(
+            object(),
+            _small_plan(),
+            identity={"cases_sha256": "a", "batch_size": 1},
+            max_requests=4,
+            max_requests_per_minute=4,
+            max_cost_units=4,
+            document_batch_size=16,
+            checkpoint_path=checkpoint,
+        )
+    )
+    data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    data["completed_batches"][0]["case_results"][0]["status"] = "TAMPERED"
+    checkpoint.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(MODULE.BatchPlanError, match="checkpoint_batch_payload_hash_mismatch"):
+        asyncio.run(
+            MODULE.run_batches(
+                object(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=4,
+                max_requests_per_minute=4,
+                max_cost_units=4,
+                document_batch_size=16,
+                checkpoint_path=checkpoint,
+                resume=True,
+            )
+        )
+
+
+def test_resume_rejects_tampered_failed_batch_identity(tmp_path, monkeypatch):
+    async def fail_run(provider, cases, corpus, alignment, **kwargs):
+        return {"status": "FAIL", "case_results": []}
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", fail_run)
+    checkpoint = tmp_path / "checkpoint.json"
+    with pytest.raises(MODULE.BatchPlanError, match="batch_failed"):
+        asyncio.run(
+            MODULE.run_batches(
+                object(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=4,
+                max_requests_per_minute=4,
+                max_cost_units=4,
+                document_batch_size=16,
+                checkpoint_path=checkpoint,
+            )
+        )
+    data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    data["failed_batch"]["case_ids"] = ["wrong"]
+    checkpoint.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(MODULE.BatchPlanError, match="checkpoint_failed_batch_case_ids_mismatch"):
+        asyncio.run(
+            MODULE.run_batches(
+                object(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=4,
+                max_requests_per_minute=4,
+                max_cost_units=4,
+                document_batch_size=16,
+                checkpoint_path=checkpoint,
+                resume=True,
+            )
+        )
+
+
+@pytest.mark.parametrize("failed_write", [1, 2])
+def test_checkpoint_write_failure_stops_before_provider_call(tmp_path, monkeypatch, failed_write):
+    provider_calls = []
+    original_write = MODULE._atomic_json
+    write_count = 0
+
+    class Provider:
+        async def embed(self, texts):
+            provider_calls.append(texts)
+            return []
+
+    async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
+        await provider.embed(["must-not-run"])
+        return {"status": "PASS", "case_results": [{"case_id": cases[0]["case_id"], "status": "PASS"}]}
+
+    def fail_checkpoint(*args, **kwargs):
+        nonlocal write_count
+        write_count += 1
+        if write_count == failed_write:
+            raise OSError("checkpoint storage unavailable")
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", fake_run_live)
+    monkeypatch.setattr(MODULE, "_atomic_json", fail_checkpoint)
+    with pytest.raises(OSError, match="checkpoint storage unavailable"):
+        asyncio.run(
+            MODULE.run_batches(
+                Provider(),
+                _small_plan(),
+                identity={"cases_sha256": "a", "batch_size": 1},
+                max_requests=4,
+                max_requests_per_minute=4,
+                max_cost_units=4,
+                document_batch_size=16,
+                checkpoint_path=tmp_path / "checkpoint.json",
+            )
+        )
+    assert provider_calls == []
+
+
+def test_resume_after_final_batch_write_does_not_repeat_provider_calls(tmp_path, monkeypatch):
+    calls = []
+    original_write = MODULE._atomic_json
+
+    class Provider:
+        async def embed(self, texts):
+            return []
+
+    async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
+        await provider.embed(["fixture"])
+        calls.append([case["case_id"] for case in cases])
+        return {"status": "PASS", "case_results": [{"case_id": cases[0]["case_id"], "status": "PASS"}]}
+
+    def interrupt_after_final_write(path, payload, **kwargs):
+        original_write(path, payload, **kwargs)
+        if len(payload["completed_batches"]) == 2:
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr(MODULE.retrieval, "run_live", fake_run_live)
+    monkeypatch.setattr(MODULE, "_atomic_json", interrupt_after_final_write)
+    checkpoint = tmp_path / "checkpoint.json"
+    run_args = {
+        "identity": {"cases_sha256": "a", "batch_size": 1},
+        "max_requests": 4,
+        "max_requests_per_minute": 4,
+        "max_cost_units": 4,
+        "document_batch_size": 16,
+        "checkpoint_path": checkpoint,
+    }
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(MODULE.run_batches(Provider(), _small_plan(), **run_args))
+    assert json.loads(checkpoint.read_text(encoding="utf-8"))["status"] == "COMPLETE"
+    assert calls == [["a"], ["b"]]
+    calls.clear()
+    monkeypatch.setattr(MODULE, "_atomic_json", original_write)
+    result = asyncio.run(MODULE.run_batches(Provider(), _small_plan(), resume=True, **run_args))
+    assert result["status"] == "PASS"
+    assert result["request_count"] == 2
+    assert len(result["case_results"]) == 2
+    assert calls == []
 
 
 def test_resume_rejects_checkpoint_that_skips_a_batch(tmp_path):
@@ -254,7 +490,7 @@ def test_resume_restores_consumed_budget_before_new_provider_calls(tmp_path, mon
     async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
         await provider.embed(["fixture"])
         calls.append([case["case_id"] for case in cases])
-        return {"status": "PASS", "case_results": []}
+        return {"status": "PASS", "case_results": [{"case_id": cases[0]["case_id"], "status": "PASS"}]}
 
     monkeypatch.setattr(MODULE.retrieval, "run_live", fake_run_live)
     checkpoint = tmp_path / "checkpoint.json"
@@ -267,15 +503,7 @@ def test_resume_restores_consumed_budget_before_new_provider_calls(tmp_path, mon
                 "eligible_case_count": 2,
                 "excluded_case_count": 0,
                 "completed_batches": [
-                    {
-                        "batch_id": "batch-001",
-                        "case_ids": ["a"],
-                        "status": "PASS",
-                        "request_count": 2,
-                        "cost_units": 2,
-                        "slot_reports": [],
-                        "case_results": [],
-                    }
+                    _completed_record("batch-001", ["a"], request_count=2, cost_units=2)
                 ],
                 "failed_batch": None,
                 "request_count": 2,
@@ -320,7 +548,7 @@ def test_resume_restores_rolling_rate_window(tmp_path, monkeypatch):
     async def fake_run_live(provider, cases, corpus, alignment, **kwargs):
         await provider.embed(["fixture"])
         calls.append([case["case_id"] for case in cases])
-        return {"status": "PASS", "case_results": []}
+        return {"status": "PASS", "case_results": [{"case_id": cases[0]["case_id"], "status": "PASS"}]}
 
     class Provider:
         async def embed(self, texts):
@@ -337,7 +565,7 @@ def test_resume_restores_rolling_rate_window(tmp_path, monkeypatch):
                 "eligible_case_count": 2,
                 "excluded_case_count": 0,
                 "completed_batches": [
-                    {"batch_id": "batch-001", "case_ids": ["a"], "status": "PASS", "slot_reports": [], "case_results": []}
+                    _completed_record("batch-001", ["a"], request_count=1, cost_units=1)
                 ],
                 "failed_batch": None,
                 "request_count": 1,

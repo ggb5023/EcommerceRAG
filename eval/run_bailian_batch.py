@@ -138,20 +138,31 @@ class RequestBudget:
 class BudgetedProvider:
     """Delegate all provider operations through the shared request budget."""
 
-    def __init__(self, provider: Any, budget: RequestBudget) -> None:
+    def __init__(
+        self,
+        provider: Any,
+        budget: RequestBudget,
+        on_request_reserved: Callable[[], None] | None = None,
+    ) -> None:
         self.provider = provider
         self.budget = budget
+        self.on_request_reserved = on_request_reserved
+
+    async def _reserve(self, operation: str) -> None:
+        await self.budget.acquire(operation)
+        if self.on_request_reserved is not None:
+            self.on_request_reserved()
 
     async def embed(self, texts: Sequence[str], **kwargs: Any) -> Any:
-        await self.budget.acquire("embedding")
+        await self._reserve("embedding")
         return await self.provider.embed(texts, **kwargs)
 
     async def rerank(self, query: str, candidates: Sequence[str], **kwargs: Any) -> Any:
-        await self.budget.acquire("rerank")
+        await self._reserve("rerank")
         return await self.provider.rerank(query, candidates, **kwargs)
 
     async def generate(self, messages: Sequence[Mapping[str, str]], **kwargs: Any) -> Any:
-        await self.budget.acquire("generation")
+        await self._reserve("generation")
         return await self.provider.generate(messages, **kwargs)
 
 
@@ -173,6 +184,11 @@ def _atomic_json(path: Path, payload: Mapping[str, Any], *, replace: bool) -> No
             os.replace(temporary, path)
         else:
             os.link(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -265,6 +281,7 @@ def _checkpoint_payload(identity: Mapping[str, Any], plan: Mapping[str, Any]) ->
         "eligible_case_count": len(plan["eligible_cases"]),
         "excluded_case_count": len(plan["excluded_cases"]),
         "completed_batches": [],
+        "active_batch": None,
         "failed_batch": None,
         "request_count": 0,
         "cost_units": 0,
@@ -272,6 +289,69 @@ def _checkpoint_payload(identity: Mapping[str, Any], plan: Mapping[str, Any]) ->
         "real_service_acceptance": False,
         "m1_connected": False,
     }
+
+
+def _batch_payload_sha256(record: Mapping[str, Any]) -> str:
+    """Hash the immutable part of a completed batch checkpoint record."""
+    payload = {
+        key: record.get(key)
+        for key in (
+            "batch_id",
+            "case_ids",
+            "status",
+            "request_count",
+            "cost_units",
+            "slot_reports",
+            "case_results",
+        )
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_batch_record(
+    record: Mapping[str, Any],
+    expected_case_ids: Sequence[str],
+    *,
+    require_payload_hash: bool,
+) -> None:
+    """Validate a completed batch payload before it can be resumed or skipped."""
+    if record.get("status") != "PASS":
+        raise BatchPlanError("checkpoint_completed_batch_status_invalid")
+    if record.get("case_ids") != list(expected_case_ids):
+        raise BatchPlanError("checkpoint_case_ids_mismatch")
+    case_results = record.get("case_results")
+    slot_reports = record.get("slot_reports")
+    if not isinstance(case_results, list) or not isinstance(slot_reports, list):
+        raise BatchPlanError("checkpoint_batch_payload_invalid")
+    if any(not isinstance(item, Mapping) for item in case_results):
+        raise BatchPlanError("checkpoint_case_results_invalid")
+    if any(not isinstance(item, Mapping) for item in slot_reports):
+        raise BatchPlanError("checkpoint_slot_reports_invalid")
+    result_case_ids = [item.get("case_id") for item in case_results]
+    if result_case_ids != list(expected_case_ids):
+        raise BatchPlanError("checkpoint_case_results_case_ids_mismatch")
+    payload_hash = record.get("payload_sha256")
+    if require_payload_hash:
+        if (
+            not isinstance(payload_hash, str)
+            or len(payload_hash) != 64
+            or payload_hash.lower() != payload_hash
+            or any(char not in "0123456789abcdef" for char in payload_hash)
+        ):
+            raise BatchPlanError("checkpoint_batch_payload_hash_invalid")
+        try:
+            expected_hash = _batch_payload_sha256(record)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise BatchPlanError("checkpoint_batch_payload_invalid") from error
+        if payload_hash != expected_hash:
+            raise BatchPlanError("checkpoint_batch_payload_hash_mismatch")
 
 
 def _load_checkpoint(path: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
@@ -310,6 +390,13 @@ def _validate_checkpoint_batches(checkpoint: Mapping[str, Any], plan: Mapping[st
     """Reject checkpoints that could skip or invent deterministic batches."""
     completed = checkpoint.get("completed_batches", [])
     batches = plan.get("batches", [])
+    status = checkpoint.get("status")
+    if status not in {"RUNNING", "FAILED", "COMPLETE"}:
+        raise BatchPlanError("checkpoint_status_invalid")
+    if checkpoint.get("eligible_case_count") != len(plan.get("eligible_cases", [])):
+        raise BatchPlanError("checkpoint_eligible_case_count_mismatch")
+    if checkpoint.get("excluded_case_count") != len(plan.get("excluded_cases", [])):
+        raise BatchPlanError("checkpoint_excluded_case_count_mismatch")
     if len(completed) > len(batches):
         raise BatchPlanError("checkpoint_completed_batch_count_invalid")
     previous_requests = 0
@@ -322,12 +409,7 @@ def _validate_checkpoint_batches(checkpoint: Mapping[str, Any], plan: Mapping[st
         if record.get("batch_id") != expected_id:
             raise BatchPlanError("checkpoint_completed_batches_not_prefix")
         expected_case_ids = [str(case["case_id"]) for case in expected]
-        if record.get("case_ids") != expected_case_ids:
-            raise BatchPlanError("checkpoint_case_ids_mismatch")
-        if record.get("status") != "PASS":
-            raise BatchPlanError("checkpoint_completed_batch_status_invalid")
-        if not isinstance(record.get("case_results", []), list) or not isinstance(record.get("slot_reports", []), list):
-            raise BatchPlanError("checkpoint_batch_payload_invalid")
+        _validate_batch_record(record, expected_case_ids, require_payload_hash=True)
         request_count = record.get("request_count", 0)
         cost_units = record.get("cost_units", request_count)
         if (
@@ -337,16 +419,69 @@ def _validate_checkpoint_batches(checkpoint: Mapping[str, Any], plan: Mapping[st
             or not isinstance(cost_units, int)
             or isinstance(cost_units, bool)
             or cost_units < previous_cost
+            or cost_units != request_count
         ):
             raise BatchPlanError("checkpoint_batch_budget_invalid")
         previous_requests = request_count
         previous_cost = cost_units
-    if int(checkpoint.get("request_count", 0)) < previous_requests:
+    request_count = int(checkpoint.get("request_count", 0))
+    cost_units = int(checkpoint.get("cost_units", 0))
+    if request_count < previous_requests:
         raise BatchPlanError("checkpoint_request_count_mismatch")
-    if int(checkpoint.get("cost_units", 0)) < previous_cost:
+    if cost_units < previous_cost or cost_units != request_count:
         raise BatchPlanError("checkpoint_cost_units_mismatch")
-    if checkpoint.get("status") == "COMPLETE" and len(completed) != len(batches):
+    failed_batch = checkpoint.get("failed_batch")
+    active_batch = checkpoint.get("active_batch")
+    if status == "FAILED":
+        if not isinstance(failed_batch, Mapping):
+            raise BatchPlanError("checkpoint_failed_batch_missing")
+        if len(completed) >= len(batches):
+            raise BatchPlanError("checkpoint_failed_batch_index_invalid")
+        expected_failed = batches[len(completed)]
+        expected_failed_id = f"batch-{len(completed) + 1:03d}"
+        expected_failed_case_ids = [str(case["case_id"]) for case in expected_failed]
+        if failed_batch.get("batch_id") != expected_failed_id:
+            raise BatchPlanError("checkpoint_failed_batch_id_mismatch")
+        if failed_batch.get("case_ids") != expected_failed_case_ids:
+            raise BatchPlanError("checkpoint_failed_batch_case_ids_mismatch")
+        if not isinstance(failed_batch.get("error_code"), str) or not failed_batch["error_code"]:
+            raise BatchPlanError("checkpoint_failed_batch_error_invalid")
+        failed_requests = failed_batch.get("reserved_request_count")
+        if (
+            not isinstance(failed_requests, int)
+            or isinstance(failed_requests, bool)
+            or failed_requests < 0
+            or request_count != previous_requests + failed_requests
+        ):
+            raise BatchPlanError("checkpoint_failed_batch_request_count_invalid")
+        if active_batch is not None:
+            raise BatchPlanError("checkpoint_active_batch_unexpected")
+    elif failed_batch is not None:
+        raise BatchPlanError("checkpoint_failed_batch_unexpected")
+    if status == "RUNNING" and active_batch is not None:
+        if not isinstance(active_batch, Mapping) or len(completed) >= len(batches):
+            raise BatchPlanError("checkpoint_active_batch_invalid")
+        expected_active = batches[len(completed)]
+        expected_active_id = f"batch-{len(completed) + 1:03d}"
+        expected_active_case_ids = [str(case["case_id"]) for case in expected_active]
+        if active_batch.get("batch_id") != expected_active_id:
+            raise BatchPlanError("checkpoint_active_batch_id_mismatch")
+        if active_batch.get("case_ids") != expected_active_case_ids:
+            raise BatchPlanError("checkpoint_active_batch_case_ids_mismatch")
+        if not isinstance(active_batch.get("reserved_request_count"), int) or isinstance(active_batch.get("reserved_request_count"), bool) or active_batch["reserved_request_count"] < 0:
+            raise BatchPlanError("checkpoint_active_batch_request_count_invalid")
+        if request_count != previous_requests + active_batch["reserved_request_count"]:
+            raise BatchPlanError("checkpoint_active_batch_budget_mismatch")
+    elif status != "RUNNING" and active_batch is not None:
+        raise BatchPlanError("checkpoint_active_batch_unexpected")
+    elif status == "RUNNING" and request_count != previous_requests:
+        raise BatchPlanError("checkpoint_running_budget_mismatch")
+    if status == "COMPLETE" and request_count != previous_requests:
+        raise BatchPlanError("checkpoint_complete_budget_mismatch")
+    if status == "COMPLETE" and len(completed) != len(batches):
         raise BatchPlanError("checkpoint_complete_batch_count_invalid")
+    if status == "RUNNING" and len(completed) == len(batches):
+        raise BatchPlanError("checkpoint_running_batch_count_invalid")
 
 
 def _record_budget(checkpoint: dict[str, Any], budget: RequestBudget) -> None:
@@ -403,9 +538,36 @@ async def run_batches(
             results.extend(completed[batch_id].get("case_results", []))
             slot_reports.extend(completed[batch_id].get("slot_reports", []))
             continue
+        previous_active = checkpoint.get("active_batch")
+        previous_failed = checkpoint.get("failed_batch")
+        reserved_request_count = 0
+        if isinstance(previous_active, Mapping) and previous_active.get("batch_id") == batch_id:
+            reserved_request_count = int(previous_active["reserved_request_count"])
+        elif isinstance(previous_failed, Mapping) and previous_failed.get("batch_id") == batch_id:
+            reserved_request_count = int(previous_failed["reserved_request_count"])
+        checkpoint["status"] = "RUNNING"
+        checkpoint["failed_batch"] = None
+        checkpoint["active_batch"] = {
+            "batch_id": batch_id,
+            "case_ids": case_ids,
+            "reserved_request_count": reserved_request_count,
+        }
+        if checkpoint_path:
+            # Publish the active batch before the first provider call.  A
+            # process that dies in the request setup window must still leave
+            # an auditable resume point, even when no request was reserved.
+            _atomic_json(checkpoint_path, checkpoint, replace=True)
+
+        def persist_reserved_request() -> None:
+            checkpoint["active_batch"]["reserved_request_count"] += 1
+            _record_budget(checkpoint, budget)
+            if checkpoint_path:
+                _atomic_json(checkpoint_path, checkpoint, replace=True)
+
+        budgeted_provider = BudgetedProvider(provider, budget, persist_reserved_request)
         try:
             run = await retrieval.run_live(
-                BudgetedProvider(provider, budget),
+                budgeted_provider,
                 list(batch),
                 plan["corpus"],
                 plan["alignment"],
@@ -416,10 +578,13 @@ async def run_batches(
         except (ProviderError, RequestBudgetExceeded, ValueError) as error:
             _record_budget(checkpoint, budget)
             checkpoint["status"] = "FAILED"
+            reserved_request_count = checkpoint["active_batch"]["reserved_request_count"]
+            checkpoint["active_batch"] = None
             checkpoint["failed_batch"] = {
                 "batch_id": batch_id,
                 "case_ids": case_ids,
                 "error_code": getattr(error, "code", type(error).__name__),
+                "reserved_request_count": reserved_request_count,
             }
             if checkpoint_path:
                 _atomic_json(checkpoint_path, checkpoint, replace=True)
@@ -435,17 +600,45 @@ async def run_batches(
         }
         if batch_record["status"] != "PASS":
             checkpoint["status"] = "FAILED"
+            reserved_request_count = checkpoint["active_batch"]["reserved_request_count"]
+            checkpoint["active_batch"] = None
             checkpoint["failed_batch"] = {
                 "batch_id": batch_id,
                 "case_ids": case_ids,
                 "error_code": "batch_failed",
+                "reserved_request_count": reserved_request_count,
             }
+            _record_budget(checkpoint, budget)
             if checkpoint_path:
                 _atomic_json(checkpoint_path, checkpoint, replace=True)
             raise BatchPlanError("batch_failed")
+        try:
+            batch_record["payload_sha256"] = _batch_payload_sha256(batch_record)
+            _validate_batch_record(batch_record, case_ids, require_payload_hash=True)
+        except (BatchPlanError, TypeError, ValueError, OverflowError) as error:
+            _record_budget(checkpoint, budget)
+            checkpoint["status"] = "FAILED"
+            reserved_request_count = checkpoint["active_batch"]["reserved_request_count"]
+            checkpoint["active_batch"] = None
+            checkpoint["failed_batch"] = {
+                "batch_id": batch_id,
+                "case_ids": case_ids,
+                "error_code": getattr(error, "code", type(error).__name__),
+                "reserved_request_count": reserved_request_count,
+            }
+            if checkpoint_path:
+                _atomic_json(checkpoint_path, checkpoint, replace=True)
+            if isinstance(error, BatchPlanError):
+                raise
+            raise BatchPlanError("batch_payload_invalid") from error
         completed[batch_id] = batch_record
         slot_reports.extend(batch_record["slot_reports"])
         checkpoint["completed_batches"] = list(completed.values())
+        checkpoint["active_batch"] = None
+        # Persist the final batch and terminal state together: a crash after
+        # this write must be resumable without issuing another provider call.
+        if len(completed) == len(batches):
+            checkpoint["status"] = "COMPLETE"
         _record_budget(checkpoint, budget)
         checkpoint["recent_request_timestamps"] = budget.recent_wall_timestamps()
         if checkpoint_path:
